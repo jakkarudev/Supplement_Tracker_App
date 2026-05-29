@@ -11,7 +11,7 @@ const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono'
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
+  viewportFit: 'cover',
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#FFFFFF' },
     { media: '(prefers-color-scheme: dark)', color: '#12141C' },
@@ -22,7 +22,6 @@ export const metadata: Metadata = {
   title: 'Regimen — Supplement & Medication Tracker',
   description:
     'A premium supplement and medication tracker. Build routines, track adherence, monitor inventory, and measure your wellness margin.',
-  generator: 'v0.app',
   icons: {
     icon: [
       {
@@ -56,10 +55,10 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className="bg-background">
       <body className={`${geist.variable} ${geistMono.variable} font-sans antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
-            <AppProvider>
-              {children}
-            </AppProvider>
-          </ThemeProvider>
+          <AppProvider>
+            {children}
+          </AppProvider>
+        </ThemeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
