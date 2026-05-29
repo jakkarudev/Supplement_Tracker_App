@@ -188,6 +188,13 @@
     border: 1px solid var(--glass-border);
     box-shadow: 0 12px 40px -10px var(--glass-shadow);
   }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
