@@ -1,0 +1,47 @@
+{
+  "planPath": "docs/plans/2026-05-30-mobile-ux-implementation.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: Foundation — globals.css + layout.tsx",
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Navigation & Header — app/page.tsx",
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Week Strip — components/week-strip.tsx",
+      "status": "pending"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: IntakeCard StatusBadge inline — components/today-routine.tsx",
+      "status": "pending"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Supplement Form — components/supplement-form.tsx",
+      "status": "pending"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Dashboard — components/biomarker-dashboard.tsx",
+      "status": "pending"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Inventory Hub — mobile Drawer for delete",
+      "status": "pending"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: PWA — manifest + next-pwa",
+      "status": "pending",
+      "blockedBy": []
+    }
+  ],
+  "lastUpdated": "2026-05-30T00:00:00Z"
+}
