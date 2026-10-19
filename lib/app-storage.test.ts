@@ -183,16 +183,18 @@ describe("createAppStorage", () => {
       }
     })
 
-    it("fails a payload with a version newer than the current one and never writes over it", () => {
-      const raw = JSON.stringify({ schemaVersion: 99, ...canonicalState })
-      const adapter = createMemoryAdapter({ initial: raw })
-      const storage = createAppStorage(adapter)
+    it("returns incompatible with the stored version and never writes over it", () => {
+      for (const version of [2, 99]) {
+        const raw = JSON.stringify({ schemaVersion: version, ...canonicalState })
+        const adapter = createMemoryAdapter({ initial: raw })
+        const storage = createAppStorage(adapter)
 
-      expect(storage.loadState().status).toBe("failed")
-      expect(adapter.stored()).toBe(raw)
+        expect(storage.loadState()).toEqual({ status: "incompatible", version })
+        expect(adapter.stored()).toBe(raw)
 
-      expect(storage.saveState(canonicalState).status).toBe("failed")
-      expect(adapter.stored()).toBe(raw)
+        expect(storage.saveState(canonicalState).status).toBe("failed")
+        expect(adapter.stored()).toBe(raw)
+      }
     })
 
     it("reports a failed load instead of throwing when the adapter cannot read", () => {

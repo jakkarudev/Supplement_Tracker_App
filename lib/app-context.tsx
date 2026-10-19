@@ -23,6 +23,7 @@ import {
   updateSupplement,
   type LogDoseInput,
 } from "@/lib/regimen-actions"
+import { toast } from "sonner"
 import { createAppStorage, localStorageAdapter } from "@/lib/app-storage"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
@@ -97,13 +98,13 @@ const INITIAL_STATE: AppState = {
 const storage = createAppStorage(localStorageAdapter)
 
 /**
- * The provider's hydration status. `failed` is the stopgap for a load that
- * reported a failure — an unreadable payload, an invalid shape, or a version
- * newer than this build: the provider hydrates empty and never writes, so the
- * stored payload is left untouched. #23–#25 split it into recovered,
- * incompatible, and unavailable as recovery and toasts land.
+ * The provider's hydration status. `incompatible` means the stored payload was
+ * written by a newer build: the provider hydrates empty, toasts why, and never
+ * writes, so the payload is left untouched. `failed` is the stopgap for the
+ * remaining load failures — an unreadable payload or an invalid shape — and is
+ * split into recovered and unavailable as #23 and #25 land.
  */
-type HydrationStatus = "loading" | "ready" | "failed"
+type HydrationStatus = "loading" | "ready" | "incompatible" | "failed"
 
 const StateCtx = createContext<AppState>(INITIAL_STATE)
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
@@ -134,6 +135,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setStatus("ready")
         return
 
+      case "incompatible":
+        // A newer build wrote this payload. Hydrate empty without writing so
+        // the stored data survives until the user updates.
+        toast.error("Your data was written by a newer version", {
+          description:
+            "This version can't read it, so nothing is shown. Update the app to see your data.",
+        })
+        setStatus("incompatible")
+        return
+
       default:
         // The load failed and the payload was left untouched. Never enable
         // writes after a failed read.
@@ -142,7 +153,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   // Persist after hydration: once for a loaded payload and on every change
-  // after that. Nothing is written while loading or after a failed load.
+  // after that. Nothing is written while loading, after a failed load, or when
+  // the stored data is incompatible with this build.
   useEffect(() => {
     if (status !== "ready") return
 
