@@ -71,7 +71,7 @@ export function BiomarkerDashboard() {
         <StatCard
           label="7-Day Adherence"
           value={`${adherenceRate}%`}
-          sub="vs last 7 days"
+          sub="Completed days; today counts when complete."
           icon={TrendingUp}
           accent="primary"
         />
