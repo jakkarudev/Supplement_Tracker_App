@@ -63,12 +63,29 @@ export function hasDroppedRecords(dropped: DroppedRecordCounts): boolean {
   return totalDroppedRecords(dropped) > 0
 }
 
+export type RepairedRecordCounts = {
+  supplements: number
+  doseLogs: number
+  wellnessLogs: number
+}
+
+/** The total number of records repaired across every collection. */
+export function totalRepairedRecords(repaired: RepairedRecordCounts): number {
+  return repaired.supplements + repaired.doseLogs + repaired.wellnessLogs
+}
+
+/** True when normalization repaired at least one record. */
+export function hasRepairedRecords(repaired: RepairedRecordCounts): boolean {
+  return totalRepairedRecords(repaired) > 0
+}
+
 export type StoredAppStateMigration =
   | {
       status: "ok"
       state: AppState
       migratedFrom: number | null
       dropped: DroppedRecordCounts
+      repaired: RepairedRecordCounts
     }
   | { status: "corrupt" }
 
@@ -85,7 +102,82 @@ function positiveOptionalNumber(value: unknown): number | undefined {
   return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : undefined
 }
 
-function normalizeSupplement(value: unknown): Supplement | null {
+/** A normalized record plus whether repairing it changed anything stored. */
+type NormalizedRecord<T> = {
+  record: T
+  repaired: boolean
+}
+
+/** True when normalization did not reproduce the stored list element for element. */
+function listRewritten<T>(
+  normalized: readonly T[],
+  stored: readonly unknown[],
+): boolean {
+  return (
+    normalized.length !== stored.length ||
+    normalized.some((entry, index) => entry !== stored[index])
+  )
+}
+
+/** Keeps only integers 0–6, in stored order, without duplicates. */
+function normalizeDays(value: readonly unknown[]): number[] {
+  const days: number[] = []
+  for (const entry of value) {
+    if (typeof entry !== "number" || !Number.isInteger(entry)) continue
+    if (entry < 0 || entry > 6) continue
+    if (days.includes(entry)) continue
+    days.push(entry)
+  }
+  return days
+}
+
+/**
+ * Text fields keep stored strings; an absent value is filled with its default
+ * without counting a repair, and any other stored value is replaced by it.
+ */
+function normalizeStoredText(
+  value: unknown,
+  fallback: string | undefined,
+): { value: string | undefined; repaired: boolean } {
+  if (typeof value === "string") return { value, repaired: false }
+  if (value === undefined) return { value: fallback, repaired: false }
+  return { value: fallback, repaired: true }
+}
+
+/**
+ * Counts and thresholds keep finite stored numbers (negatives included: an
+ * overdrawn inventory is real), coerce numeric strings, and fall back to their
+ * defaults otherwise. Only values that were absent fill silently.
+ */
+function normalizeStoredNumber(
+  value: unknown,
+  fallback: number,
+): { value: number; repaired: boolean } {
+  if (typeof value === "number") {
+    return Number.isFinite(value)
+      ? { value, repaired: false }
+      : { value: fallback, repaired: true }
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return { value: parsed, repaired: true }
+  }
+
+  return { value: fallback, repaired: value !== undefined }
+}
+
+/** Booleans keep their stored value; absent and invalid ones become `true`. */
+function normalizeStoredBoolean(
+  value: unknown,
+  fallback: boolean,
+): { value: boolean; repaired: boolean } {
+  if (typeof value === "boolean") return { value, repaired: false }
+  if (value === undefined) return { value: fallback, repaired: false }
+  return { value: fallback, repaired: true }
+}
+
+function normalizeSupplement(value: unknown): NormalizedRecord<Supplement> | null {
   if (!isRecord(value)) return null
   const s = value as Partial<Supplement>
   if (typeof s.id !== "string" || s.id.length === 0) return null
@@ -94,29 +186,57 @@ function normalizeSupplement(value: unknown): Supplement | null {
   if (!isCalendarDate(s.startedOn)) return null
   if (!Array.isArray(s.days) || !Array.isArray(s.times)) return null
 
+  const days = normalizeDays(s.days)
+  const times = normalizeTimeList(s.times)
+  const brand = normalizeStoredText(s.brand, "")
+  const potency = normalizeStoredText(s.potency, "")
+  const dosage = normalizeStoredText(s.dosage, "")
+  const notes = normalizeStoredText(s.notes, undefined)
+  const purchaseUrl = normalizeStoredText(s.purchaseUrl, undefined)
+  const totalCount = normalizeStoredNumber(s.totalCount, 0)
+  const currentCount = normalizeStoredNumber(s.currentCount, 0)
+  const restockReminder = normalizeStoredBoolean(s.restockReminder, true)
+  const restockThreshold = normalizeStoredNumber(s.restockThreshold, 10)
+
+  const repaired =
+    listRewritten(days, s.days) ||
+    listRewritten(times, s.times) ||
+    brand.repaired ||
+    potency.repaired ||
+    dosage.repaired ||
+    notes.repaired ||
+    purchaseUrl.repaired ||
+    totalCount.repaired ||
+    currentCount.repaired ||
+    restockReminder.repaired ||
+    restockThreshold.repaired
+
   return {
-    id: s.id,
-    name: s.name,
-    brand: s.brand ?? "",
-    potency: s.potency ?? "",
-    dosage: s.dosage ?? "",
-    form: s.form,
-    notes: s.notes,
-    purchaseUrl: s.purchaseUrl,
-    startedOn: s.startedOn,
-    durationDays: positiveOptionalNumber(s.durationDays),
-    cycleActiveDays: positiveOptionalNumber(s.cycleActiveDays),
-    cycleBreakDays: positiveOptionalNumber(s.cycleBreakDays),
-    days: s.days,
-    times: normalizeTimeList(s.times),
-    totalCount: Number.isFinite(s.totalCount) ? Number(s.totalCount) : 0,
-    currentCount: Number.isFinite(s.currentCount) ? Number(s.currentCount) : 0,
-    restockReminder: s.restockReminder ?? true,
-    restockThreshold: Number.isFinite(s.restockThreshold) ? Number(s.restockThreshold) : 10,
+    record: {
+      id: s.id,
+      name: s.name,
+      brand: brand.value ?? "",
+      potency: potency.value ?? "",
+      dosage: dosage.value ?? "",
+      form: s.form,
+      notes: notes.value,
+      purchaseUrl: purchaseUrl.value,
+      startedOn: s.startedOn,
+      durationDays: positiveOptionalNumber(s.durationDays),
+      cycleActiveDays: positiveOptionalNumber(s.cycleActiveDays),
+      cycleBreakDays: positiveOptionalNumber(s.cycleBreakDays),
+      days,
+      times,
+      totalCount: totalCount.value,
+      currentCount: currentCount.value,
+      restockReminder: restockReminder.value,
+      restockThreshold: restockThreshold.value,
+    },
+    repaired,
   }
 }
 
-function normalizeDoseLog(value: unknown): DoseLog | null {
+function normalizeDoseLog(value: unknown): NormalizedRecord<DoseLog> | null {
   if (!isRecord(value)) return null
 
   const { id, supplementId, date, time, status, inventoryAmount } = value
@@ -128,6 +248,8 @@ function normalizeDoseLog(value: unknown): DoseLog | null {
   const normalizedTime = normalizeTimeOfDay(time)
   if (!normalizedTime) return null
 
+  let repaired = normalizedTime !== time
+
   const log: DoseLog = { id, supplementId, date, time: normalizedTime, status }
   if (
     status === "taken" &&
@@ -136,9 +258,12 @@ function normalizeDoseLog(value: unknown): DoseLog | null {
     inventoryAmount > 0
   ) {
     log.inventoryAmount = inventoryAmount
+  } else if (inventoryAmount !== undefined) {
+    // Present but not carried by the normalized log: stripped, so a repair.
+    repaired = true
   }
 
-  return log
+  return { record: log, repaired }
 }
 
 function isWellnessScore(value: unknown): value is number {
@@ -159,43 +284,50 @@ function normalizeWellnessLog(value: unknown): WellnessLog | null {
 function normalizeWellnessLogs(collection: unknown): {
   records: WellnessLog[]
   dropped: number
+  repaired: number
 } {
-  if (!Array.isArray(collection)) return { records: [], dropped: 0 }
+  if (!Array.isArray(collection)) return { records: [], dropped: 0, repaired: 0 }
 
   const byDate = new Map<string, WellnessLog>()
   let dropped = 0
+  let repaired = 0
 
   for (const value of collection) {
     const log = normalizeWellnessLog(value)
     if (log === null) {
       dropped++
     } else {
+      // A later entry replacing an earlier one for the same date collapses a
+      // stored record, so it is a repair rather than a drop.
+      if (byDate.has(log.date)) repaired++
       byDate.set(log.date, log)
     }
   }
 
-  return { records: [...byDate.values()], dropped }
+  return { records: [...byDate.values()], dropped, repaired }
 }
 
 function normalizeRecords<T>(
   collection: unknown,
-  normalize: (value: unknown) => T | null,
-): { records: T[]; dropped: number } {
-  if (!Array.isArray(collection)) return { records: [], dropped: 0 }
+  normalize: (value: unknown) => NormalizedRecord<T> | null,
+): { records: T[]; dropped: number; repaired: number } {
+  if (!Array.isArray(collection)) return { records: [], dropped: 0, repaired: 0 }
 
   const records: T[] = []
   let dropped = 0
+  let repaired = 0
 
   for (const value of collection) {
-    const record = normalize(value)
-    if (record === null) {
+    const normalized = normalize(value)
+    if (normalized === null) {
       dropped++
     } else {
-      records.push(record)
+      records.push(normalized.record)
+      if (normalized.repaired) repaired++
     }
   }
 
-  return { records, dropped }
+  return { records, dropped, repaired }
 }
 
 /**
@@ -213,6 +345,7 @@ function storedDoseLogs(payload: StoredPayload): unknown[] {
 function normalizeStoredState(payload: StoredPayload): {
   state: AppState
   dropped: DroppedRecordCounts
+  repaired: RepairedRecordCounts
 } {
   const rawDoseLogs = storedDoseLogs(payload)
   const rawSupplements = Array.isArray(payload.supplements) ? payload.supplements : []
@@ -231,6 +364,11 @@ function normalizeStoredState(payload: StoredPayload): {
       supplements: supplements.dropped,
       doseLogs: doseLogs.dropped,
       wellnessLogs: wellnessLogs.dropped,
+    },
+    repaired: {
+      supplements: supplements.repaired,
+      doseLogs: doseLogs.repaired,
+      wellnessLogs: wellnessLogs.repaired,
     },
   }
 }
@@ -297,19 +435,20 @@ function runMigrationSteps(payload: StoredPayload, fromVersion: number): StoredP
 /**
  * Runs versioned migration steps and then the always-on normalizer. Returns the
  * canonical state, the version it migrated from (null when already current),
- * and how many records of each collection validation dropped.
+ * and how many records of each collection validation dropped and repaired.
  */
 export function migrateStoredAppState(raw: unknown): StoredAppStateMigration {
   const detection = detectSchemaVersion(raw)
   if (detection.status !== "ok") return { status: "corrupt" }
 
   const migrated = runMigrationSteps(raw as StoredPayload, detection.version)
-  const { state, dropped } = normalizeStoredState(migrated)
+  const { state, dropped, repaired } = normalizeStoredState(migrated)
 
   return {
     status: "ok",
     state,
     migratedFrom: detection.version < CURRENT_SCHEMA_VERSION ? detection.version : null,
     dropped,
+    repaired,
   }
 }
