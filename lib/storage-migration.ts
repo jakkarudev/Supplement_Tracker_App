@@ -1,5 +1,5 @@
 import type { DoseLog, DoseStatus, Supplement, WellnessLog } from "./supplements-data"
-import { normalizeTimeOfDay } from "./day-regimen"
+import { isCalendarDate, normalizeTimeList, normalizeTimeOfDay } from "./day-regimen"
 
 type AppStateShape = {
   supplements: Supplement[]
@@ -15,7 +15,6 @@ type StoredAppState = {
 }
 
 const LEGACY_STARTED_ON = "1970-01-01"
-const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const DOSE_STATUSES: readonly DoseStatus[] = ["taken", "pending", "snoozed"]
 
 const HISTORICAL_DRAFTS = [
@@ -99,22 +98,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object"
 }
 
-function isCalendarDate(value: unknown): value is string {
-  if (typeof value !== "string") return false
-  const match = CALENDAR_DATE.exec(value)
-  if (!match) return false
-
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const date = new Date(year, month - 1, day)
-  return (
-    date.getFullYear() === year &&
-    date.getMonth() === month - 1 &&
-    date.getDate() === day
-  )
-}
-
 function isDoseStatus(value: unknown): value is DoseStatus {
   return DOSE_STATUSES.includes(value as DoseStatus)
 }
@@ -130,15 +113,6 @@ function sameNumberArray(a: unknown, b: readonly number[]): boolean {
 
 function sameStringArray(a: unknown, b: readonly string[]): boolean {
   return Array.isArray(a) && a.length === b.length && a.every((value, index) => value === b[index])
-}
-
-function normalizeTimes(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-
-  const times = value
-    .map(normalizeTimeOfDay)
-    .filter((time): time is string => time !== null)
-  return [...new Set(times)]
 }
 
 function normalizeSupplement(value: unknown): Supplement | null {
@@ -160,7 +134,7 @@ function normalizeSupplement(value: unknown): Supplement | null {
     cycleActiveDays: positiveOptionalNumber(s.cycleActiveDays),
     cycleBreakDays: positiveOptionalNumber(s.cycleBreakDays),
     days: Array.isArray(s.days) ? s.days : [],
-    times: normalizeTimes(s.times),
+    times: normalizeTimeList(s.times),
     totalCount: Number.isFinite(s.totalCount) ? Number(s.totalCount) : 0,
     currentCount: Number.isFinite(s.currentCount) ? Number(s.currentCount) : 0,
     restockReminder: s.restockReminder ?? true,

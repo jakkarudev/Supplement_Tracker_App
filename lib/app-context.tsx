@@ -21,6 +21,7 @@ import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
   dayRegimen,
+  doseKey,
   formatCalendarDate,
   today,
 } from "@/lib/day-regimen"
@@ -71,11 +72,13 @@ function reducer(state: AppState, action: Action): AppState {
       }
 
     case "LOG_DOSE": {
+      const incomingKey = doseKey(
+        action.payload.supplementId,
+        action.payload.date,
+        action.payload.time,
+      )
       const existingIdx = state.doseLogs.findIndex(
-        (l) =>
-          l.supplementId === action.payload.supplementId &&
-          l.date === action.payload.date &&
-          l.time === action.payload.time,
+        (l) => doseKey(l.supplementId, l.date, l.time) === incomingKey,
       )
       const existingLog = state.doseLogs[existingIdx]
 
