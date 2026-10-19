@@ -18,15 +18,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Detects the stored schema version. A flat payload without a numeric
- * `schemaVersion` is the unversioned legacy shape, version 0. A value that is
- * not a state object at all is corrupt.
+ * Detects the stored schema version. Any finite numeric `schemaVersion` is
+ * that version, fractions and negatives included: only the future-version
+ * guard in the storage seam compares it against the current version. A
+ * missing, non-numeric, or non-finite version is the unversioned legacy
+ * shape, version 0. A value that is not a state object at all is corrupt.
  */
 export function detectSchemaVersion(raw: unknown): SchemaVersionDetection {
   if (!isRecord(raw)) return { status: "corrupt" }
 
   const version = raw.schemaVersion
-  if (typeof version === "number" && Number.isInteger(version) && version >= 0) {
+  if (typeof version === "number" && Number.isFinite(version)) {
     return { status: "ok", version }
   }
 
@@ -37,6 +39,16 @@ export type DroppedRecordCounts = {
   supplements: number
   doseLogs: number
   wellnessLogs: number
+}
+
+/** The total number of records dropped across every collection. */
+export function totalDroppedRecords(dropped: DroppedRecordCounts): number {
+  return dropped.supplements + dropped.doseLogs + dropped.wellnessLogs
+}
+
+/** True when normalization dropped at least one record. */
+export function hasDroppedRecords(dropped: DroppedRecordCounts): boolean {
+  return totalDroppedRecords(dropped) > 0
 }
 
 export type StoredAppStateMigration =
@@ -166,18 +178,23 @@ function normalizeRecords<T>(
   return { records, dropped }
 }
 
+/**
+ * The stored dose logs. Current storage writes `doseLogs`; legacy state wrote
+ * `intakeLogs`, and the current key wins when both exist. Neither key holding
+ * an array means there are no logs to read.
+ */
+function storedDoseLogs(payload: StoredPayload): unknown[] {
+  if (Array.isArray(payload.doseLogs)) return payload.doseLogs
+  if (Array.isArray(payload.intakeLogs)) return payload.intakeLogs
+  return []
+}
+
 /** Validates and salvages the collections of a canonical-shaped payload. */
 function normalizeStoredState(payload: StoredPayload): {
   state: AppState
   dropped: DroppedRecordCounts
 } {
-  // Current storage writes doseLogs. Legacy state wrote intakeLogs; the
-  // normalizer tolerates either key so a stripped version stays safe.
-  const rawDoseLogs = Array.isArray(payload.doseLogs)
-    ? payload.doseLogs
-    : Array.isArray(payload.intakeLogs)
-      ? payload.intakeLogs
-      : []
+  const rawDoseLogs = storedDoseLogs(payload)
   const rawSupplements = Array.isArray(payload.supplements) ? payload.supplements : []
 
   const supplements = normalizeRecords(rawSupplements, normalizeSupplement)
@@ -231,11 +248,7 @@ type MigrationStep = (payload: StoredPayload) => StoredPayload
  * pure: re-running it on its own output is a no-op.
  */
 function migrateV0ToV1(payload: StoredPayload): StoredPayload {
-  const rawDoseLogs = Array.isArray(payload.doseLogs)
-    ? payload.doseLogs
-    : Array.isArray(payload.intakeLogs)
-      ? payload.intakeLogs
-      : []
+  const rawDoseLogs = storedDoseLogs(payload)
 
   return {
     schemaVersion: 1,
