@@ -17,7 +17,12 @@ import { nanoid } from "@/lib/nanoid"
 import { scheduleNativeSupplementReminders } from "@/lib/reminders"
 import { dosageInventoryAmount } from "@/lib/dosage"
 import { migrateStoredAppState } from "@/lib/storage-migration"
-import { isSupplementScheduledOnDate } from "@/lib/supplement-schedule"
+import {
+  addDays,
+  dayRegimen,
+  formatCalendarDate,
+  today,
+} from "@/lib/day-regimen"
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -215,30 +220,12 @@ export function useAdherenceStats() {
 
   return useMemo(() => {
     // Build an array of the last 7 days in local time ("YYYY-MM-DD")
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date()
-      d.setDate(d.getDate() - (6 - i))
-      const y = d.getFullYear()
-      const mo = String(d.getMonth() + 1).padStart(2, "0")
-      const day = String(d.getDate()).padStart(2, "0")
-      return `${y}-${mo}-${day}`
-    })
+    const days = Array.from({ length: 7 }, (_, i) => addDays(today(), i - 6))
 
     const dailyAdherence: (number | null)[] = days.map((date) => {
-      const scheduled = supplements.flatMap((s) =>
-        isSupplementScheduledOnDate(s, date) ? s.times.map((time) => ({ sid: s.id, time })) : [],
-      )
-      if (scheduled.length === 0) return null  // nothing scheduled → don't count
-      const takenCount = scheduled.filter(({ sid, time }) =>
-        doseLogs.some(
-          (l) =>
-            l.supplementId === sid &&
-            l.date === date &&
-            l.time === time &&
-            l.status === "taken",
-        ),
-      ).length
-      return Math.round((takenCount / scheduled.length) * 100)
+      const { summary } = dayRegimen({ supplements, doseLogs }, date)
+      if (summary.total === 0) return null // nothing scheduled → don't count
+      return Math.round((summary.taken / summary.total) * 100)
     })
 
     const scheduledDailyRates = dailyAdherence.filter((v): v is number => v !== null)
@@ -257,11 +244,10 @@ export function useAdherenceStats() {
     // Also count today if fully completed
     if (dailyAdherence[6] === 100) streak++
 
-    const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     const chartData = days.map((date, i) => {
       const wlog = wellnessLogs.find((w) => w.date === date)
       return {
-        day: DAY_NAMES[dowFromDate(date)],
+        day: formatCalendarDate(date, { weekday: "short" }),
         adherence: dailyAdherence[i],
         energy: wlog?.energy ?? null,
         focus: wlog?.focus ?? null,
