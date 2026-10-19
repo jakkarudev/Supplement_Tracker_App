@@ -29,16 +29,18 @@ export type StorageAdapter = {
 /**
  * The outcome of a load. `ok` carries the canonical state and the version it
  * was migrated from (null when it was already current); `empty` means nothing
- * usable was stored; `unavailable` means storage itself could not be reached,
- * so the app must stay usable in memory and never write; `recovered` means the
- * stored payload lost data and a verbatim backup was written before the
- * salvaged state is saved back; `failed` carries the error that stopped the
- * load for every other case. The typed newer-version result (#24) refines the
- * remaining `failed` cases.
+ * usable was stored; `incompatible` carries the stored version when it is
+ * newer than this build, and means the payload is never migrated or written
+ * over; `unavailable` means storage itself could not be reached, so the app
+ * must stay usable in memory and never write; `recovered` means the stored
+ * payload lost data and a verbatim backup was written before the salvaged
+ * state is saved back; `failed` carries the error that stopped the load for
+ * every other case.
  */
 export type LoadStateResult =
   | { status: "ok"; state: AppState; migratedFrom: number | null }
   | { status: "empty" }
+  | { status: "incompatible"; version: number }
   | { status: "unavailable"; error: unknown }
   | {
       status: "recovered"
@@ -129,8 +131,8 @@ function parsePayload(raw: string): ParsedPayload {
 export function createAppStorage(adapter: StorageAdapter): AppStorage {
   // A load that cannot use the stored payload disables writes until a load
   // succeeds again, so the payload that failed to load is never written over.
-  // Recovery (#23) restores writes after a successful backup; the typed
-  // newer-version guard (#24) and unavailable storage (#25) keep them off.
+  // Recovery (#23) restores writes after a successful backup; an incompatible
+  // newer-version payload and unavailable storage (#25) keep them off.
   let writesDisabled = false
 
   return {
@@ -181,13 +183,10 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
           return recover(emptyState(), noDrops())
         }
         if (detection.version > CURRENT_SCHEMA_VERSION) {
+          // Newer data is never migrated, downgraded, or backed up; writes are
+          // disabled so this load cannot overwrite the only copy.
           writesDisabled = true
-          return {
-            status: "failed",
-            error: new Error(
-              `Stored payload schema version ${detection.version} is newer than ${CURRENT_SCHEMA_VERSION}`,
-            ),
-          }
+          return { status: "incompatible", version: detection.version }
         }
 
         const migration = migrateStoredAppState(parsed.value)

@@ -105,15 +105,21 @@ const storage = createAppStorage(localStorageAdapter)
 /**
  * The provider's hydration status. `recovered` means the payload lost data,
  * was backed up, and the salvaged state should be written back in the current
- * format. `unavailable` means storage could not be reached at load time: the
- * provider serves the empty state, warns once that changes will not be saved,
- * and never writes. `failed` is the stopgap for every other failed load — an
- * unreadable payload, an invalid shape, or a version newer than this build:
- * the provider hydrates empty and never writes, so the stored payload is left
- * untouched. #24 splits it further into incompatible as the newer-version
- * guard lands.
+ * format. `incompatible` means the stored payload was written by a newer
+ * build: the provider hydrates empty, toasts why, and never writes, so the
+ * payload is left untouched. `unavailable` means storage could not be reached
+ * at load time: the provider serves the empty state, warns that changes will
+ * not be saved, and never writes. `failed` covers any other failed load — the
+ * provider hydrates empty and never writes, so the stored payload is left
+ * untouched.
  */
-type HydrationStatus = "loading" | "ready" | "recovered" | "unavailable" | "failed"
+type HydrationStatus =
+  | "loading"
+  | "ready"
+  | "recovered"
+  | "incompatible"
+  | "unavailable"
+  | "failed"
 
 /** The description shown when a save fails, keyed by its classified reason. */
 const SAVE_FAILURE_DESCRIPTIONS: Record<SaveFailureReason, string> = {
@@ -181,6 +187,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setStatus("ready")
         return
 
+      case "incompatible":
+        // A newer build wrote this payload. Hydrate empty without writing so
+        // the stored data survives until the user updates.
+        toast.error("Your data was written by a newer version", {
+          description:
+            "This version can't read it, so nothing is shown. Update the app to see your data.",
+        })
+        setStatus("incompatible")
+        return
+
       case "unavailable":
         // Storage could not be reached. Serve the empty state (already the
         // initial state), warn that nothing will be saved, and keep writes
@@ -201,8 +217,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Persist after hydration: once for a loaded payload and on every change
   // after that. A recovered load also writes once here, which saves the
   // salvaged state back in the current format so recovery cannot repeat.
-  // Nothing is written while loading, while storage is unavailable, or after
-  // a failed load.
+  // Nothing is written while loading, while storage is unavailable, after a
+  // failed load, or when the stored data is incompatible with this build.
   useEffect(() => {
     if (status !== "ready" && status !== "recovered") return
 
