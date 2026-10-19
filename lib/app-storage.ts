@@ -3,8 +3,10 @@ import {
   CURRENT_SCHEMA_VERSION,
   detectSchemaVersion,
   hasDroppedRecords,
+  hasRepairedRecords,
   migrateStoredAppState,
   type DroppedRecordCounts,
+  type RepairedRecordCounts,
 } from "./storage-migration"
 
 /**
@@ -31,12 +33,12 @@ export type StorageAdapter = {
  * The outcome of a load. `ok` carries the canonical state and the version it
  * was migrated from (null when it was already current); `empty` means nothing
  * usable was stored; `recovered` means the stored payload could not be parsed,
- * failed the top-level shape check, or lost data, and a verbatim backup was
- * written before the salvaged state is saved back; `incompatible` carries the
- * stored version when it is newer than this build, and means the payload is
- * never migrated or written over; `unavailable` means storage itself could not
- * be reached, or a recovery backup could not be written, so the app must stay
- * usable in memory and never write.
+ * failed the top-level shape check, or lost or repaired data, and a verbatim
+ * backup was written before the salvaged state is saved back; `incompatible`
+ * carries the stored version when it is newer than this build, and means the
+ * payload is never migrated or written over; `unavailable` means storage
+ * itself could not be reached, or a recovery backup could not be written, so
+ * the app must stay usable in memory and never write.
  */
 export type LoadStateResult =
   | { status: "ok"; state: AppState; migratedFrom: number | null }
@@ -46,6 +48,7 @@ export type LoadStateResult =
       state: AppState
       backupKey: string
       dropped: DroppedRecordCounts
+      repaired: RepairedRecordCounts
     }
   | { status: "incompatible"; version: number }
   | { status: "unavailable"; error: unknown }
@@ -76,6 +79,10 @@ function emptyState(): AppState {
 }
 
 function noDrops(): DroppedRecordCounts {
+  return { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
+}
+
+function noRepairs(): RepairedRecordCounts {
   return { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
 }
 
@@ -177,11 +184,12 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
       const recover = (
         state: AppState,
         dropped: DroppedRecordCounts,
+        repaired: RepairedRecordCounts,
       ): LoadStateResult => {
         try {
           const backupKey = backupPayload(adapter, storedPayload)
           writesDisabled = false
-          return { status: "recovered", state, backupKey, dropped }
+          return { status: "recovered", state, backupKey, dropped, repaired }
         } catch (error) {
           writesDisabled = true
           return { status: "unavailable", error }
@@ -191,12 +199,12 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
       try {
         const parsed = parsePayload(storedPayload)
         if (parsed.status === "unparseable") {
-          return recover(emptyState(), noDrops())
+          return recover(emptyState(), noDrops(), noRepairs())
         }
 
         const detection = detectSchemaVersion(parsed.value)
         if (detection.status !== "ok") {
-          return recover(emptyState(), noDrops())
+          return recover(emptyState(), noDrops(), noRepairs())
         }
         if (detection.version > CURRENT_SCHEMA_VERSION) {
           // Newer data is never migrated, downgraded, or backed up; writes are
@@ -209,14 +217,15 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
         if (migration.status !== "ok") {
           // Defensive: version detection already accepted the payload, but a
           // corrupt migration result still gets the recovery treatment.
-          return recover(emptyState(), noDrops())
+          return recover(emptyState(), noDrops(), noRepairs())
         }
 
         if (
           hasInvalidCollectionShape(parsed.value) ||
-          hasDroppedRecords(migration.dropped)
+          hasDroppedRecords(migration.dropped) ||
+          hasRepairedRecords(migration.repaired)
         ) {
-          return recover(migration.state, migration.dropped)
+          return recover(migration.state, migration.dropped, migration.repaired)
         }
 
         writesDisabled = false
@@ -229,7 +238,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
         // Anything unexpected while processing a non-empty payload still
         // backs the raw value up before recovering, so nothing can be
         // overwritten without a backup.
-        return recover(emptyState(), noDrops())
+        return recover(emptyState(), noDrops(), noRepairs())
       }
     },
 

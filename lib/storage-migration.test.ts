@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest"
 import {
   detectSchemaVersion,
   hasDroppedRecords,
+  hasRepairedRecords,
   migrateStoredAppState,
   totalDroppedRecords,
+  totalRepairedRecords,
 } from "./storage-migration"
 
 const legacySupplement = {
@@ -50,6 +52,7 @@ const canonicalDoseLog = {
 }
 
 const NO_DROPS = { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
+const NO_REPAIRS = { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
 
 const historicalSample = {
   id: "vit-d3",
@@ -95,6 +98,7 @@ describe("migrateStoredAppState", () => {
       status: "ok",
       migratedFrom: 0,
       dropped: NO_DROPS,
+      repaired: NO_REPAIRS,
       state: {
         supplements: [canonicalSupplement],
         doseLogs: [canonicalDoseLog],
@@ -115,6 +119,7 @@ describe("migrateStoredAppState", () => {
       status: "ok",
       migratedFrom: null,
       dropped: NO_DROPS,
+      repaired: NO_REPAIRS,
       state: {
         supplements: [canonicalSupplement],
         doseLogs: [canonicalDoseLog],
@@ -189,6 +194,9 @@ describe("migrateStoredAppState", () => {
       }),
     )
 
+    // The version 0 → 1 step already rewrote the 12-hour times, so the
+    // always-on normalizer sees canonical values and counts no repairs.
+    expect(result.repaired).toEqual(NO_REPAIRS)
     expect(result.state.supplements[0].times).toEqual(["08:00", "12:00"])
   })
 
@@ -201,8 +209,25 @@ describe("migrateStoredAppState", () => {
       }),
     )
 
+    expect(result.repaired).toEqual(NO_REPAIRS)
     expect(result.state.supplements).toHaveLength(1)
     expect(result.state.supplements[0].times).toEqual([])
+  })
+
+  it("counts filtered, duplicated, and 12-hour stored times as one repair", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          { ...canonicalSupplement, times: ["noon", "08:00 PM", "20:00", "20:00"] },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired.supplements).toBe(1)
+    expect(result.state.supplements[0].times).toEqual(["20:00"])
   })
 
   it("counts dropped records per collection", () => {
@@ -377,13 +402,300 @@ describe("migrateStoredAppState", () => {
     )
 
     expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.repaired).toEqual(NO_REPAIRS)
     expect(result.state.supplements).toEqual([schedulelessSupplement])
 
     const again = expectOk(
       migrateStoredAppState({ schemaVersion: 1, ...result.state }),
     )
     expect(again.dropped).toEqual(NO_DROPS)
+    expect(again.repaired).toEqual(NO_REPAIRS)
     expect(again.state).toEqual(result.state)
+  })
+
+  it("filters stored days to integers 0–6 and dedupes them", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          { ...canonicalSupplement, days: [1, 7, 7, 2.5, "3", null, -1, 0, 6] },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired).toEqual({
+      supplements: 1,
+      doseLogs: 0,
+      wellnessLogs: 0,
+    })
+    expect(result.state.supplements[0].days).toEqual([1, 0, 6])
+  })
+
+  it("dedupes stored days without reordering them", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [{ ...canonicalSupplement, days: [3, 1, 3] }],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired.supplements).toBe(1)
+    expect(result.state.supplements[0].days).toEqual([3, 1])
+  })
+
+  it("replaces non-string text fields with their defaults", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          {
+            ...canonicalSupplement,
+            brand: 5,
+            potency: null,
+            dosage: ["2 capsules"],
+            notes: 42,
+            purchaseUrl: false,
+          },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired.supplements).toBe(1)
+    expect(result.state.supplements[0]).toEqual({
+      ...canonicalSupplement,
+      brand: "",
+      potency: "",
+      dosage: "",
+      notes: undefined,
+      purchaseUrl: undefined,
+    })
+  })
+
+  it("replaces a non-boolean restock reminder with true", () => {
+    for (const restockReminder of [null, 0, "yes", {}, []]) {
+      const result = expectOk(
+        migrateStoredAppState({
+          schemaVersion: 1,
+          supplements: [{ ...canonicalSupplement, restockReminder }],
+          doseLogs: [],
+          wellnessLogs: [],
+        }),
+      )
+
+      expect(result.repaired.supplements).toBe(1)
+      expect(result.state.supplements[0].restockReminder).toBe(true)
+    }
+  })
+
+  it("keeps a stored false restock reminder as-is", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [{ ...canonicalSupplement, restockReminder: false }],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired).toEqual(NO_REPAIRS)
+    expect(result.state.supplements[0].restockReminder).toBe(false)
+  })
+
+  it("coerces numeric-string counts and thresholds", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          { ...canonicalSupplement, totalCount: "60", currentCount: "44", restockThreshold: "15" },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired.supplements).toBe(1)
+    expect(result.state.supplements[0]).toMatchObject({
+      totalCount: 60,
+      currentCount: 44,
+      restockThreshold: 15,
+    })
+  })
+
+  it("falls back to today's defaults for non-numeric counts and thresholds", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          {
+            ...canonicalSupplement,
+            totalCount: "many",
+            currentCount: null,
+            restockThreshold: Number.NaN,
+          },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired.supplements).toBe(1)
+    expect(result.state.supplements[0]).toMatchObject({
+      totalCount: 0,
+      currentCount: 0,
+      restockThreshold: 10,
+    })
+  })
+
+  it("falls back to defaults for non-finite count values", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          {
+            ...canonicalSupplement,
+            totalCount: Number.NaN,
+            currentCount: Number.POSITIVE_INFINITY,
+            restockThreshold: Number.NEGATIVE_INFINITY,
+          },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired.supplements).toBe(1)
+    expect(result.state.supplements[0]).toMatchObject({
+      totalCount: 0,
+      currentCount: 0,
+      restockThreshold: 10,
+    })
+  })
+
+  it("preserves finite negative counts and thresholds, counting no repair", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          { ...canonicalSupplement, totalCount: -5, currentCount: -3, restockThreshold: -1 },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired).toEqual(NO_REPAIRS)
+    expect(result.state.supplements[0]).toMatchObject({
+      totalCount: -5,
+      currentCount: -3,
+      restockThreshold: -1,
+    })
+  })
+
+  it("fills absent text, count, and reminder values without counting repairs", () => {
+    const minimalSupplement = {
+      id: "minimal",
+      name: "Minimal",
+      form: "Tablet",
+      startedOn: "2026-05-01",
+      days: [],
+      times: [],
+    }
+
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [minimalSupplement],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.repaired).toEqual(NO_REPAIRS)
+    expect(result.state.supplements[0]).toEqual({
+      id: "minimal",
+      name: "Minimal",
+      brand: "",
+      potency: "",
+      dosage: "",
+      notes: undefined,
+      purchaseUrl: undefined,
+      form: "Tablet",
+      startedOn: "2026-05-01",
+      durationDays: undefined,
+      cycleActiveDays: undefined,
+      cycleBreakDays: undefined,
+      days: [],
+      times: [],
+      totalCount: 0,
+      currentCount: 0,
+      restockReminder: true,
+      restockThreshold: 10,
+    })
+  })
+
+  it("counts one repair per record however many fields it repaired", () => {
+    const messySupplement = {
+      ...canonicalSupplement,
+      id: "messy",
+      days: [1, 7, 7],
+      times: ["08:00 PM", "08:00 PM"],
+      brand: 5,
+      totalCount: "60",
+      restockReminder: null,
+    }
+
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [canonicalSupplement, messySupplement],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired).toEqual({
+      supplements: 1,
+      doseLogs: 0,
+      wellnessLogs: 0,
+    })
+    expect(result.state.supplements).toHaveLength(2)
+    expect(result.state.supplements[1]).toMatchObject({
+      id: "messy",
+      days: [1],
+      times: ["20:00"],
+      brand: "",
+      totalCount: 60,
+      restockReminder: true,
+    })
+  })
+
+  it("leaves nothing to repair after a repaired load is normalized again", () => {
+    const raw = {
+      schemaVersion: 1,
+      supplements: [
+        { ...canonicalSupplement, days: [1, 7, 7], brand: 5, totalCount: "60" },
+      ],
+      doseLogs: [{ ...canonicalDoseLog, time: "08:00 PM" }],
+      wellnessLogs: [],
+    }
+
+    const first = expectOk(migrateStoredAppState(raw))
+    expect(first.repaired).toEqual({
+      supplements: 1,
+      doseLogs: 1,
+      wellnessLogs: 0,
+    })
+
+    const second = expectOk(migrateStoredAppState({ schemaVersion: 1, ...first.state }))
+    expect(second.repaired).toEqual(NO_REPAIRS)
+    expect(second.state).toEqual(first.state)
   })
 
   it("keeps the last valid wellness entry per date without counting superseded duplicates as drops", () => {
@@ -401,6 +713,7 @@ describe("migrateStoredAppState", () => {
     )
 
     expect(result.dropped.wellnessLogs).toBe(0)
+    expect(result.repaired.wellnessLogs).toBe(1)
     expect(result.state.wellnessLogs).toEqual([
       { date: "2026-05-01", energy: 8, focus: 9 },
       { date: "2026-05-02", energy: 6, focus: 6 },
@@ -443,9 +756,72 @@ describe("migrateStoredAppState", () => {
     )
 
     expect(result.dropped.doseLogs).toBe(0)
+    expect(result.repaired.doseLogs).toBe(2)
     expect(result.state.doseLogs[0].inventoryAmount).toBe(2)
     expect(result.state.doseLogs[1]).not.toHaveProperty("inventoryAmount")
     expect(result.state.doseLogs[2]).not.toHaveProperty("inventoryAmount")
+  })
+
+  it("counts a 12-hour dose-log time rewrite as a repair", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [],
+        doseLogs: [{ ...canonicalDoseLog, time: "08:00 PM" }],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired).toEqual({
+      supplements: 0,
+      doseLogs: 1,
+      wellnessLogs: 0,
+    })
+    expect(result.state.doseLogs[0].time).toBe("20:00")
+  })
+
+  it("counts an inventory amount stripped from a log that may not carry one as a repair", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [],
+        doseLogs: [
+          { ...canonicalDoseLog, id: "kept", status: "taken", inventoryAmount: 2 },
+          { ...canonicalDoseLog, id: "snoozed", status: "snoozed", inventoryAmount: 2 },
+          { ...canonicalDoseLog, id: "string-amount", status: "taken", inventoryAmount: "2" },
+          { ...canonicalDoseLog, id: "zero-amount", status: "taken", inventoryAmount: 0 },
+        ],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped.doseLogs).toBe(0)
+    expect(result.repaired.doseLogs).toBe(3)
+    expect(result.state.doseLogs[0].inventoryAmount).toBe(2)
+    for (const log of result.state.doseLogs.slice(1)) {
+      expect(log).not.toHaveProperty("inventoryAmount")
+    }
+  })
+
+  it("counts each wellness entry that supersedes a stored date as a repair", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [],
+        doseLogs: [],
+        wellnessLogs: [
+          { date: "2026-05-01", energy: 5, focus: 5 },
+          { date: "2026-05-01", energy: 6, focus: 6 },
+          { date: "2026-05-01", energy: 8, focus: 9 },
+        ],
+      }),
+    )
+
+    expect(result.dropped.wellnessLogs).toBe(0)
+    expect(result.repaired.wellnessLogs).toBe(2)
+    expect(result.state.wellnessLogs).toEqual([
+      { date: "2026-05-01", energy: 8, focus: 9 },
+    ])
   })
 
   it("preserves an annotated historical sample supplement", () => {
@@ -496,6 +872,7 @@ describe("migrateStoredAppState", () => {
     const once = expectOk(migrateStoredAppState(canonicalState))
     expect(once.migratedFrom).toBeNull()
     expect(once.dropped).toEqual(NO_DROPS)
+    expect(once.repaired).toEqual(NO_REPAIRS)
     expect(once.state).toEqual({
       supplements: [canonicalSupplement],
       doseLogs: canonicalState.doseLogs,
@@ -503,6 +880,7 @@ describe("migrateStoredAppState", () => {
     })
 
     const twice = expectOk(migrateStoredAppState(once.state))
+    expect(twice.repaired).toEqual(NO_REPAIRS)
     expect(twice.state).toEqual(once.state)
   })
 
@@ -536,6 +914,22 @@ describe("dropped-record helpers", () => {
     expect(hasDroppedRecords(NO_DROPS)).toBe(false)
     expect(
       hasDroppedRecords({ supplements: 0, doseLogs: 1, wellnessLogs: 0 }),
+    ).toBe(true)
+  })
+})
+
+describe("repaired-record helpers", () => {
+  it("totals repairs across every collection", () => {
+    expect(totalRepairedRecords(NO_REPAIRS)).toBe(0)
+    expect(
+      totalRepairedRecords({ supplements: 1, doseLogs: 2, wellnessLogs: 3 }),
+    ).toBe(6)
+  })
+
+  it("detects whether any collection repaired a record", () => {
+    expect(hasRepairedRecords(NO_REPAIRS)).toBe(false)
+    expect(
+      hasRepairedRecords({ supplements: 0, doseLogs: 1, wellnessLogs: 0 }),
     ).toBe(true)
   })
 })
