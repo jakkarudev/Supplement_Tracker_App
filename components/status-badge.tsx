@@ -1,9 +1,9 @@
 import { Check, Clock, Moon } from "lucide-react"
-import type { IntakeStatus } from "@/lib/supplements-data"
+import type { DoseStatus } from "@/lib/supplements-data"
 import { cn } from "@/lib/utils"
 
 const config: Record<
-  IntakeStatus,
+  DoseStatus,
   { label: string; className: string; Icon: typeof Check }
 > = {
   taken: {
@@ -23,7 +23,7 @@ const config: Record<
   },
 }
 
-export function StatusBadge({ status }: { status: IntakeStatus }) {
+export function StatusBadge({ status }: { status: DoseStatus }) {
   const { label, className, Icon } = config[status]
   return (
     <span

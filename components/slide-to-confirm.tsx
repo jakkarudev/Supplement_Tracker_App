@@ -11,7 +11,7 @@ type SlideToConfirmProps = {
 
 export function SlideToConfirm({
   onConfirm,
-  label = "Slide to confirm intake",
+  label = "Slide to confirm dose",
   confirmedLabel = "Logged",
 }: SlideToConfirmProps) {
   const trackRef = useRef<HTMLDivElement>(null)

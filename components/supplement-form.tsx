@@ -103,28 +103,6 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>
 
-/** Convert "08:00 AM" → "08:00" for <input type="time"> */
-function toInputTime(display: string): string {
-  const parts = display.split(" ")
-  if (parts.length === 1) return display // already 24h
-  const [rawTime, meridiem] = parts
-  const [hourStr, min] = rawTime.split(":")
-  let hour = parseInt(hourStr, 10)
-  if (meridiem === "PM" && hour !== 12) hour += 12
-  if (meridiem === "AM" && hour === 12) hour = 0
-  return `${String(hour).padStart(2, "0")}:${min}`
-}
-
-/** Convert "08:00" (24h input) → "08:00 AM" */
-function toDisplayTime(input: string): string {
-  const [hourStr, min] = input.split(":")
-  let hour = parseInt(hourStr, 10)
-  const meridiem = hour >= 12 ? "PM" : "AM"
-  if (hour > 12) hour -= 12
-  if (hour === 0) hour = 12
-  return `${String(hour).padStart(2, "0")}:${min} ${meridiem}`
-}
-
 function SectionCard({
   icon: Icon,
   title,
@@ -213,7 +191,7 @@ export function SupplementForm({ editingId, onDone }: Props) {
         restockReminder: editing.restockReminder,
         restockThreshold: editing.restockThreshold,
       })
-      setTimeInputs(editing.times.map(toInputTime))
+      setTimeInputs(editing.times)
     } else {
       form.reset(defaultValues)
       setTimeInputs(["08:00"])
@@ -260,8 +238,8 @@ export function SupplementForm({ editingId, onDone }: Props) {
   }
 
   function onSubmit(values: FormValues) {
-    // Deduplicate times before saving
-    const times = [...new Set(timeInputs.filter(Boolean).map(toDisplayTime))]
+    // Deduplicate canonical times before saving
+    const times = [...new Set(timeInputs.filter(Boolean))]
     const purchaseUrl = values.purchaseUrl?.trim() || undefined
     const dosage = formatDosage(values.form, values.dosage)
     const durationDays = values.durationMode === "limited" ? values.durationDays : undefined

@@ -14,7 +14,7 @@ const supplement: Supplement = {
   cycleActiveDays: undefined,
   cycleBreakDays: undefined,
   days: [1],
-  times: ["12:00 PM"],
+  times: ["12:00"],
   totalCount: 60,
   currentCount: 52,
   restockReminder: false,
@@ -54,6 +54,9 @@ describe("syncSupplementReminders", () => {
       expect.objectContaining({ id: "supplement-reminders" }),
     )
     expect(driver.cancel).toHaveBeenCalledWith({ notifications: [{ id: 99 }] })
+    expect(driver.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+      driver.schedule.mock.invocationCallOrder[0],
+    )
     expect(driver.schedule).toHaveBeenCalledTimes(1)
     const firstScheduleArg = driver.schedule.mock.calls[0][0]
     expect(firstScheduleArg.notifications.length).toBeGreaterThan(0)
