@@ -240,6 +240,17 @@ export function SupplementForm({ editingId, onDone }: Props) {
   }
 
   function onSubmit(values: FormValues) {
+    // The supplement can disappear while this form is open: deleted in
+    // another tab, or an adoption replaced the store. Saving the old record
+    // would resurrect an intentional deletion, so report it instead.
+    if (editingId && !editing) {
+      toast.error("This supplement no longer exists", {
+        description: "Your changes were not saved.",
+      })
+      onDone?.()
+      return
+    }
+
     // Deduplicate canonical times before saving
     const times = [...new Set(timeInputs.filter(Boolean))]
     const purchaseUrl = values.purchaseUrl?.trim() || undefined

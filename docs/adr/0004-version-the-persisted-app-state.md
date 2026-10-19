@@ -8,7 +8,7 @@ Stored payloads are flat and carry `schemaVersion` alongside the state collectio
 
 Before a load can be followed by a save, the raw stored value is backed up to `regimen-v1.corrupt.<ISO timestamp>` whenever it cannot be parsed, fails the top-level shape check, or produces dropped or repaired records during normalization (ADR 0005). Only the three newest backups are kept. If the backup write fails, the original value is left untouched and storage is treated as unavailable, so no overwrite can occur.
 
-The historical-draft deletion rule is dropped. It could erase user annotations because its equality check ignored `notes` and `purchaseUrl`, and a destructive migration must not be re-runnable. Cross-tab sync is deliberately out of scope.
+The historical-draft deletion rule is dropped. It could erase user annotations because its equality check ignored `notes` and `purchaseUrl`, and a destructive migration must not be re-runnable. Cross-tab sync was deliberately out of scope for the versioning work; ADR 0006 adds it without changing the payload shape.
 
 ## Consequences
 

@@ -93,3 +93,21 @@ _Avoid_: fixed record, cleaned record
 **Recovery Backup**:
 A verbatim copy of stored data taken before the app overwrites it after a load that dropped or repaired records.
 _Avoid_: snapshot, dump
+
+### Cross-tab state
+
+**Tab**:
+One open instance of the app in a browser; the unit that shares the stored state.
+_Avoid_: window, client, session
+
+**External Write**:
+A write to the stored app state made by another tab.
+_Avoid_: remote write, foreign write
+
+**Adoption**:
+A tab replacing its displayed state with the state loaded after an external write.
+_Avoid_: sync, refresh, reload
+
+**Stale Write**:
+A write computed from a tab's state after an external write has already replaced it.
+_Avoid_: losing write, conflict, clobber
