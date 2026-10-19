@@ -27,13 +27,12 @@ import {
 import {
   createAppStorage,
   localStorageAdapter,
+  type RecoveryCounts,
   type SaveFailureReason,
 } from "@/lib/app-storage"
 import {
   totalDroppedRecords,
   totalRepairedRecords,
-  type DroppedRecordCounts,
-  type RepairedRecordCounts,
 } from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
@@ -144,20 +143,24 @@ function recordCount(count: number): string {
   return `${count} record${count === 1 ? "" : "s"}`
 }
 
+/** "1 record was" / "2 records were": a count with its agreeing verb. */
+function recordCountWithVerb(count: number): string {
+  return `${recordCount(count)} ${count === 1 ? "was" : "were"}`
+}
+
 /** The one-line summary of a recovery, with its backup location appended. */
-function recoverySummary(
-  backupKey: string,
-  dropped: number,
-  repaired: number,
-): string {
+function recoverySummary(backupKey: string, counts: RecoveryCounts): string {
+  const dropped = totalDroppedRecords(counts.dropped)
+  const repaired = totalRepairedRecords(counts.repaired)
+
   if (dropped > 0 && repaired > 0) {
-    return `Recovered your data; ${recordCount(dropped)} were dropped and ${repaired} repaired. Backup saved as ${backupKey}.`
+    return `Recovered your data; ${recordCountWithVerb(dropped)} dropped and ${repaired} repaired. Backup saved as ${backupKey}.`
   }
   if (repaired > 0) {
-    return `Cleaned up your stored data; ${recordCount(repaired)} were repaired. Backup saved as ${backupKey}.`
+    return `Cleaned up your stored data; ${recordCountWithVerb(repaired)} repaired. Backup saved as ${backupKey}.`
   }
   if (dropped > 0) {
-    return `Recovered your data; ${recordCount(dropped)} were dropped. Backup saved as ${backupKey}.`
+    return `Recovered your data; ${recordCountWithVerb(dropped)} dropped. Backup saved as ${backupKey}.`
   }
   return `Recovered your data from a damaged store; no records were dropped. Backup saved as ${backupKey}.`
 }
@@ -167,20 +170,10 @@ function recoverySummary(
  * per-collection details go to the console so the one-line summary stays
  * readable.
  */
-function announceRecovery(
-  backupKey: string,
-  dropped: DroppedRecordCounts,
-  repaired: RepairedRecordCounts,
-) {
-  console.warn("Recovered stored data", { backupKey, dropped, repaired })
+function announceRecovery(backupKey: string, counts: RecoveryCounts) {
+  console.warn("Recovered stored data", { backupKey, ...counts })
 
-  toast.warning(
-    recoverySummary(
-      backupKey,
-      totalDroppedRecords(dropped),
-      totalRepairedRecords(repaired),
-    ),
-  )
+  toast.warning(recoverySummary(backupKey, counts))
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -210,7 +203,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return
 
       case "recovered":
-        announceRecovery(result.backupKey, result.dropped, result.repaired)
+        announceRecovery(result.backupKey, {
+          dropped: result.dropped,
+          repaired: result.repaired,
+        })
         dispatch({ type: "HYDRATE", payload: result.state })
         setStatus("recovered")
         return

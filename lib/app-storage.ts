@@ -59,6 +59,16 @@ export type SaveStateResult =
   | { status: "saved" }
   | { status: "failed"; reason: SaveFailureReason; error: unknown }
 
+/**
+ * The drop and repair counts a recovered load carries, bundled so the two
+ * always travel together. The `recovered` result still exposes them as
+ * sibling fields because the spec names both there.
+ */
+export type RecoveryCounts = {
+  dropped: DroppedRecordCounts
+  repaired: RepairedRecordCounts
+}
+
 export type AppStorage = {
   loadState: () => LoadStateResult
   saveState: (state: AppState) => SaveStateResult
@@ -78,12 +88,12 @@ function emptyState(): AppState {
   return { supplements: [], doseLogs: [], wellnessLogs: [] }
 }
 
-function noDrops(): DroppedRecordCounts {
-  return { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
-}
-
-function noRepairs(): RepairedRecordCounts {
-  return { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
+/** Zero drop and repair counts, for a load with nothing to report per collection. */
+function noCounts(): RecoveryCounts {
+  return {
+    dropped: { supplements: 0, doseLogs: 0, wellnessLogs: 0 },
+    repaired: { supplements: 0, doseLogs: 0, wellnessLogs: 0 },
+  }
 }
 
 /**
@@ -183,13 +193,18 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
       // no write follows it either.
       const recover = (
         state: AppState,
-        dropped: DroppedRecordCounts,
-        repaired: RepairedRecordCounts,
+        counts: RecoveryCounts,
       ): LoadStateResult => {
         try {
           const backupKey = backupPayload(adapter, storedPayload)
           writesDisabled = false
-          return { status: "recovered", state, backupKey, dropped, repaired }
+          return {
+            status: "recovered",
+            state,
+            backupKey,
+            dropped: counts.dropped,
+            repaired: counts.repaired,
+          }
         } catch (error) {
           writesDisabled = true
           return { status: "unavailable", error }
@@ -199,12 +214,12 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
       try {
         const parsed = parsePayload(storedPayload)
         if (parsed.status === "unparseable") {
-          return recover(emptyState(), noDrops(), noRepairs())
+          return recover(emptyState(), noCounts())
         }
 
         const detection = detectSchemaVersion(parsed.value)
         if (detection.status !== "ok") {
-          return recover(emptyState(), noDrops(), noRepairs())
+          return recover(emptyState(), noCounts())
         }
         if (detection.version > CURRENT_SCHEMA_VERSION) {
           // Newer data is never migrated, downgraded, or backed up; writes are
@@ -217,7 +232,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
         if (migration.status !== "ok") {
           // Defensive: version detection already accepted the payload, but a
           // corrupt migration result still gets the recovery treatment.
-          return recover(emptyState(), noDrops(), noRepairs())
+          return recover(emptyState(), noCounts())
         }
 
         if (
@@ -225,7 +240,10 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
           hasDroppedRecords(migration.dropped) ||
           hasRepairedRecords(migration.repaired)
         ) {
-          return recover(migration.state, migration.dropped, migration.repaired)
+          return recover(migration.state, {
+            dropped: migration.dropped,
+            repaired: migration.repaired,
+          })
         }
 
         writesDisabled = false
@@ -238,7 +256,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
         // Anything unexpected while processing a non-empty payload still
         // backs the raw value up before recovering, so nothing can be
         // overwritten without a backup.
-        return recover(emptyState(), noDrops(), noRepairs())
+        return recover(emptyState(), noCounts())
       }
     },
 
