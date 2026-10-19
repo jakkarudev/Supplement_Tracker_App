@@ -10,9 +10,9 @@ import {
 } from "react"
 import {
   type Supplement,
-  type DoseLog,
   type WellnessLog,
 } from "@/lib/supplements-data"
+import type { AppState } from "@/lib/app-state"
 import { nanoid } from "@/lib/nanoid"
 import { scheduleNativeSupplementReminders } from "@/lib/reminders"
 import {
@@ -33,11 +33,8 @@ import {
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-export type AppState = {
-  supplements: Supplement[]
-  doseLogs: DoseLog[]
-  wellnessLogs: WellnessLog[]
-}
+// Re-exported so existing imports from the provider keep working.
+export type { AppState }
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
 

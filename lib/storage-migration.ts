@@ -1,11 +1,6 @@
 import type { DoseLog, DoseStatus, Supplement, WellnessLog } from "./supplements-data"
+import type { AppState } from "./app-state"
 import { isCalendarDate, normalizeTimeList, normalizeTimeOfDay } from "./day-regimen"
-
-type AppStateShape = {
-  supplements: Supplement[]
-  doseLogs: DoseLog[]
-  wellnessLogs: WellnessLog[]
-}
 
 type StoredAppState = {
   supplements?: unknown
@@ -90,7 +85,7 @@ const HISTORICAL_DRAFTS = [
   },
 ] as const
 
-function emptyState(): AppStateShape {
+function emptyState(): AppState {
   return { supplements: [], doseLogs: [], wellnessLogs: [] }
 }
 
@@ -191,7 +186,7 @@ function isUnreferencedHistoricalDraft(value: unknown, rawLogs: unknown[]): bool
   )
 }
 
-export function migrateStoredAppState(raw: unknown): AppStateShape {
+export function migrateStoredAppState(raw: unknown): AppState {
   if (!isRecord(raw)) return emptyState()
   const input = raw as StoredAppState
 
