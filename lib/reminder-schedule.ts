@@ -1,7 +1,7 @@
 import type { LocalNotificationSchema } from "@capacitor/local-notifications"
 import type { Supplement } from "./supplements-data"
 import { upcomingScheduledDates } from "./supplement-schedule"
-import { clockFromTime } from "./time"
+import { clockFromTime, today } from "./day-regimen"
 
 export const REMINDER_CHANNEL_ID = "supplement-reminders"
 const REMINDER_HORIZON_DAYS = 30
@@ -27,17 +27,9 @@ function dateTimeFromLocalParts(date: string, hour: number, minute: number): Dat
   return new Date(y, m - 1, d, hour, minute, 0, 0)
 }
 
-function todayString(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
-}
-
 export function buildSupplementReminderNotifications(
   supplements: Supplement[],
-  fromDate = todayString(),
+  fromDate = today(),
   horizonDays = REMINDER_HORIZON_DAYS,
 ): LocalNotificationSchema[] {
   return supplements.flatMap((supplement) =>

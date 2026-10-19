@@ -1,5 +1,5 @@
 import type { DoseLog, DoseStatus, Supplement, WellnessLog } from "./supplements-data"
-import { normalizeTimeOfDay } from "./time"
+import { normalizeTimeOfDay } from "./day-regimen"
 
 type AppStateShape = {
   supplements: Supplement[]

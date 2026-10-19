@@ -1,0 +1,225 @@
+import type { DoseLog, DoseStatus, Supplement } from "./supplements-data"
+
+export type CalendarDate = string
+
+export type Period = "Morning" | "Afternoon" | "Evening" | "Night"
+
+export type ScheduledDose = {
+  key: string
+  supplement: Supplement
+  date: CalendarDate
+  time: string
+  period: Period
+  log: DoseLog | null
+  status: DoseStatus
+}
+
+export type DayRegimen = {
+  date: CalendarDate
+  doses: ScheduledDose[]
+  summary: {
+    total: number
+    taken: number
+  }
+}
+
+const CANONICAL_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/
+const LEGACY_TIME = /^(\d{1,2}):([0-5]\d)\s*([AaPp][Mm])$/
+
+const MILLISECONDS_PER_DAY = 86_400_000
+
+function daysBetween(start: CalendarDate, end: CalendarDate): number {
+  const [startYear, startMonth, startDay] = start.split("-").map(Number)
+  const [endYear, endMonth, endDay] = end.split("-").map(Number)
+  const a = Date.UTC(startYear, startMonth - 1, startDay)
+  const b = Date.UTC(endYear, endMonth - 1, endDay)
+  return Math.floor((b - a) / MILLISECONDS_PER_DAY)
+}
+
+function isSupplementActiveOnDate(supplement: Supplement, date: CalendarDate): boolean {
+  const elapsed = daysBetween(supplement.startedOn, date)
+  if (elapsed < 0) return false
+  if (supplement.durationDays !== undefined && elapsed >= supplement.durationDays) return false
+
+  const activeDays = supplement.cycleActiveDays
+  const breakDays = supplement.cycleBreakDays
+  if (activeDays && breakDays) {
+    return elapsed % (activeDays + breakDays) < activeDays
+  }
+
+  return true
+}
+
+function isSupplementScheduledOnDate(supplement: Supplement, date: CalendarDate): boolean {
+  return isSupplementActiveOnDate(supplement, date) && supplement.days.includes(dayOfWeek(date))
+}
+
+function canonicalTimes(supplement: Supplement): string[] {
+  const normalized = supplement.times
+    .map(normalizeTimeOfDay)
+    .filter((time): time is string => time !== null)
+  return [...new Set(normalized)]
+}
+
+function localDateFromCalendarDate(date: CalendarDate): Date {
+  const [year, month, day] = date.split("-").map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function calendarDateFromLocalDate(date: Date): CalendarDate {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+/** Returns today's local calendar date as "YYYY-MM-DD". */
+export function today(): CalendarDate {
+  return calendarDateFromLocalDate(new Date())
+}
+
+/** Adds calendar days to a date, keeping local-date behavior. */
+export function addDays(date: CalendarDate, days: number): CalendarDate {
+  const next = localDateFromCalendarDate(date)
+  next.setDate(next.getDate() + days)
+  return calendarDateFromLocalDate(next)
+}
+
+/** Parses a calendar date to local day-of-week (0=Sun … 6=Sat). */
+export function dayOfWeek(date: CalendarDate): number {
+  return localDateFromCalendarDate(date).getDay()
+}
+
+/** Returns the Sunday-start week containing the given calendar date. */
+export function weekDates(date: CalendarDate): CalendarDate[] {
+  const sunday = localDateFromCalendarDate(date)
+  sunday.setDate(sunday.getDate() - sunday.getDay())
+  return Array.from({ length: 7 }, (_, index) => addDays(calendarDateFromLocalDate(sunday), index))
+}
+
+/** Formats a calendar date as a local UI label. */
+export function formatCalendarDate(
+  date: CalendarDate,
+  options: Intl.DateTimeFormatOptions = { month: "long", day: "numeric" },
+): string {
+  return localDateFromCalendarDate(date).toLocaleDateString("en-US", options)
+}
+
+/** Returns the supplement's scheduled doses for one calendar date. */
+export function scheduledDoses(
+  supplements: Supplement[],
+  date: CalendarDate,
+): ScheduledDose[] {
+  const ordered: { dose: ScheduledDose; order: number }[] = []
+  let order = 0
+
+  for (const supplement of supplements) {
+    if (!isSupplementScheduledOnDate(supplement, date)) continue
+
+    for (const time of canonicalTimes(supplement)) {
+      ordered.push({
+        dose: {
+          key: `${supplement.id}|${date}|${time}`,
+          supplement,
+          date,
+          time,
+          period: periodFromTime(time),
+          log: null,
+          status: "pending",
+        },
+        order: order++,
+      })
+    }
+  }
+
+  return ordered
+    .sort((a, b) => a.dose.time.localeCompare(b.dose.time) || a.order - b.order)
+    .map(({ dose }) => dose)
+}
+
+/** Returns one calendar day's scheduled doses joined with their dose logs. */
+export function dayRegimen(
+  { supplements, doseLogs }: { supplements: Supplement[]; doseLogs: DoseLog[] },
+  date: CalendarDate,
+): DayRegimen {
+  const doses = scheduledDoses(supplements, date).map((dose) => {
+    const log =
+      doseLogs.find(
+        (candidate) =>
+          candidate.supplementId === dose.supplement.id &&
+          candidate.date === dose.date &&
+          candidate.time === dose.time,
+      ) ?? null
+
+    return { ...dose, log, status: log?.status ?? "pending" }
+  })
+  const taken = doses.filter((dose) => dose.status === "taken").length
+
+  return { date, doses, summary: { total: doses.length, taken } }
+}
+
+/** Returns schedule-only doses over a date-major horizon starting at `fromDate`. */
+export function upcomingScheduledDoses(
+  supplements: Supplement[],
+  fromDate: CalendarDate,
+  horizonDays: number,
+): ScheduledDose[] {
+  const doses: ScheduledDose[] = []
+
+  for (let index = 0; index < horizonDays; index++) {
+    doses.push(...scheduledDoses(supplements, addDays(fromDate, index)))
+  }
+
+  return doses
+}
+
+/** Returns the hour and minute parts of a canonical "HH:mm" time. */
+export function clockFromTime(time: string): { hour: number; minute: number } {
+  const [hour, minute] = time.split(":").map(Number)
+  return { hour, minute }
+}
+
+/**
+ * Returns the canonical 24-hour "HH:mm" form of a stored time, or null when
+ * the value is not a clock time. Legacy 12-hour display times are accepted so
+ * persisted state can migrate in place.
+ */
+export function normalizeTimeOfDay(value: unknown): string | null {
+  if (typeof value !== "string") return null
+
+  const trimmed = value.trim()
+  const canonical = CANONICAL_TIME.exec(trimmed)
+  if (canonical) return trimmed
+
+  const legacy = LEGACY_TIME.exec(trimmed)
+  if (!legacy) return null
+
+  const hour12 = Number(legacy[1])
+  if (hour12 < 1 || hour12 > 12) return null
+
+  const minute = legacy[2]
+  const meridiem = legacy[3].toUpperCase()
+  const hour = (hour12 % 12) + (meridiem === "PM" ? 12 : 0)
+  return `${String(hour).padStart(2, "0")}:${minute}`
+}
+
+/** Formats a canonical "HH:mm" time as a zero-padded 12-hour display time. */
+export function formatTimeForDisplay(time: string): string {
+  const match = CANONICAL_TIME.exec(time)
+  if (!match) return time
+
+  const hour = Number(match[1])
+  const minute = match[2]
+  const meridiem = hour < 12 ? "AM" : "PM"
+  const displayHour = hour % 12 === 0 ? 12 : hour % 12
+  return `${String(displayHour).padStart(2, "0")}:${minute} ${meridiem}`
+}
+
+/** Derives the named part of the day from a canonical "HH:mm" time. */
+export function periodFromTime(time: string): Period {
+  const { hour } = clockFromTime(time)
+  if (hour < 12) return "Morning"
+  if (hour < 17) return "Afternoon"
+  if (hour < 21) return "Evening"
+  return "Night"
+}
