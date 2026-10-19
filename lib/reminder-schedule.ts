@@ -1,21 +1,10 @@
 import type { LocalNotificationSchema } from "@capacitor/local-notifications"
 import type { Supplement } from "./supplements-data"
 import { upcomingScheduledDates } from "./supplement-schedule"
+import { clockFromTime } from "./time"
 
 export const REMINDER_CHANNEL_ID = "supplement-reminders"
 const REMINDER_HORIZON_DAYS = 30
-
-export function displayTimeToClock(time: string): { hour: number; minute: number } {
-  const [rawTime, meridiem] = time.trim().split(/\s+/)
-  const [hourPart, minutePart = "0"] = rawTime.split(":")
-  let hour = Number.parseInt(hourPart, 10)
-  const minute = Number.parseInt(minutePart, 10)
-
-  if (meridiem?.toUpperCase() === "PM" && hour !== 12) hour += 12
-  if (meridiem?.toUpperCase() === "AM" && hour === 12) hour = 0
-
-  return { hour, minute }
-}
 
 export function notificationIdForReminder(
   supplementId: string,
@@ -54,7 +43,7 @@ export function buildSupplementReminderNotifications(
   return supplements.flatMap((supplement) =>
     upcomingScheduledDates(supplement, fromDate, horizonDays).flatMap((date) =>
       supplement.times.map((time) => {
-        const { hour, minute } = displayTimeToClock(time)
+        const { hour, minute } = clockFromTime(time)
         const dose = [supplement.dosage, supplement.potency].filter(Boolean).join(" · ")
 
         return {

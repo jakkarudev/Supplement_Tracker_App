@@ -6,11 +6,10 @@ import { WeekStrip } from "@/components/week-strip"
 import { StatusBadge } from "@/components/status-badge"
 import { SlideToConfirm } from "@/components/slide-to-confirm"
 import { useAppState, useAppDispatch, todayString, nanoid } from "@/lib/app-context"
-import type { IntakeLog } from "@/lib/supplements-data"
+import type { DoseLog, DoseStatus } from "@/lib/supplements-data"
+import { formatTimeForDisplay, periodFromTime, type Period } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { isSupplementScheduledOnDate } from "@/lib/supplement-schedule"
-
-type Period = "Morning" | "Afternoon" | "Evening" | "Night"
 
 const periodMeta: Record<Period, { Icon: typeof Sun; label: string }> = {
   Morning: { Icon: Sunrise, label: "Morning" },
@@ -19,86 +18,63 @@ const periodMeta: Record<Period, { Icon: typeof Sun; label: string }> = {
   Night: { Icon: BedDouble, label: "Night" },
 }
 
-function getPeriod(time: string): Period {
-  const [rawTime, meridiem] = time.split(" ")
-  const [hourStr] = rawTime.split(":")
-  let hour = parseInt(hourStr, 10)
-  if (meridiem === "PM" && hour !== 12) hour += 12
-  if (meridiem === "AM" && hour === 12) hour = 0
-  if (hour < 12) return "Morning"
-  if (hour < 17) return "Afternoon"
-  if (hour < 21) return "Evening"
-  return "Night"
-}
-
-function timeTo24h(time: string): number {
-  const [rawTime, meridiem] = time.split(" ")
-  const [hourStr, minStr] = rawTime.split(":")
-  let hour = parseInt(hourStr, 10)
-  const min = parseInt(minStr, 10)
-  if (meridiem === "PM" && hour !== 12) hour += 12
-  if (meridiem === "AM" && hour === 12) hour = 0
-  return hour * 60 + min
-}
-
-type ScheduledIntake = {
+type ScheduledDose = {
   key: string
   supplementId: string
   time: string
   period: Period
-  log: IntakeLog | null
+  log: DoseLog | null
 }
 
 export function TodayRoutine() {
-  const { supplements, intakeLogs } = useAppState()
+  const { supplements, doseLogs } = useAppState()
   const dispatch = useAppDispatch()
   const today = todayString()
 
-  const intakes = useMemo<ScheduledIntake[]>(() => {
-    const result: ScheduledIntake[] = []
+  const doses = useMemo<ScheduledDose[]>(() => {
+    const result: ScheduledDose[] = []
     for (const s of supplements) {
       if (!isSupplementScheduledOnDate(s, today)) continue
       for (const time of s.times) {
         const existing =
-          intakeLogs.find(
+          doseLogs.find(
             (l) => l.supplementId === s.id && l.date === today && l.time === time,
           ) ?? null
         result.push({
           key: `${s.id}-${today}-${time}`,
           supplementId: s.id,
           time,
-          period: getPeriod(time),
+          period: periodFromTime(time),
           log: existing,
         })
       }
     }
     return result
-  }, [supplements, intakeLogs, today])
+  }, [supplements, doseLogs, today])
 
   const grouped = useMemo(() => {
-    const groups = new Map<string, ScheduledIntake[]>()
-    for (const item of intakes) {
+    const groups = new Map<string, ScheduledDose[]>()
+    for (const item of doses) {
       const key = `${item.period}|${item.time}`
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key)!.push(item)
     }
-    return [...groups.entries()].sort(
-      ([, a], [, b]) => timeTo24h(a[0].time) - timeTo24h(b[0].time),
+    return [...groups.entries()].sort(([, a], [, b]) =>
+      a[0].time.localeCompare(b[0].time),
     )
-  }, [intakes])
+  }, [doses])
 
-  const takenCount = intakes.filter((i) => i.log?.status === "taken").length
-  const pct = intakes.length === 0 ? 0 : Math.round((takenCount / intakes.length) * 100)
+  const takenCount = doses.filter((d) => d.log?.status === "taken").length
+  const pct = doses.length === 0 ? 0 : Math.round((takenCount / doses.length) * 100)
 
-  function logIntake(item: ScheduledIntake, status: IntakeLog["status"]) {
+  function logDose(item: ScheduledDose, status: DoseStatus) {
     dispatch({
-      type: "LOG_INTAKE",
+      type: "LOG_DOSE",
       payload: {
         id: item.log?.id ?? nanoid(),
         supplementId: item.supplementId,
         date: today,
         time: item.time,
-        period: item.period,
         status,
       },
     })
@@ -113,7 +89,7 @@ export function TodayRoutine() {
             <p className="text-sm font-medium text-muted-foreground">Today&apos;s progress</p>
             <p className="mt-1 text-3xl font-semibold tracking-tight">
               {takenCount}
-              <span className="text-muted-foreground">/{intakes.length}</span>
+              <span className="text-muted-foreground">/{doses.length}</span>
               <span className="ml-2 text-base font-medium text-muted-foreground">logged</span>
             </p>
           </div>
@@ -135,7 +111,7 @@ export function TodayRoutine() {
       {/* Week calendar strip */}
       <WeekStrip />
 
-      {intakes.length === 0 ? (
+      {doses.length === 0 ? (
         <div className="glass rounded-[1.25rem] p-6 text-center text-muted-foreground sm:rounded-3xl sm:p-8">
           <Pill className="mx-auto mb-3 h-8 w-8 opacity-40" />
           <p className="text-sm">No supplements scheduled for today.</p>
@@ -154,7 +130,9 @@ export function TodayRoutine() {
                   </span>
                   <div>
                     <h3 className="text-sm font-semibold leading-tight">{period}</h3>
-                    <p className="text-xs text-muted-foreground tabular-nums">{items[0].time}</p>
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      {formatTimeForDisplay(items[0].time)}
+                    </p>
                   </div>
                 </div>
                 <div className="ml-3 space-y-3 border-l border-dashed border-border pl-4 sm:ml-[1.1rem] sm:pl-6">
@@ -163,15 +141,15 @@ export function TodayRoutine() {
                     if (!supp) return null
                     const status = item.log?.status ?? "pending"
                     return (
-                      <IntakeCard
+                      <DoseCard
                         key={item.key}
                         name={supp.name}
                         brand={supp.brand}
                         potency={supp.potency}
                         dosage={supp.dosage}
                         status={status}
-                        onConfirm={() => logIntake(item, "taken")}
-                        onSnooze={() => logIntake(item, "snoozed")}
+                        onConfirm={() => logDose(item, "taken")}
+                        onSnooze={() => logDose(item, "snoozed")}
                       />
                     )
                   })}
@@ -185,17 +163,17 @@ export function TodayRoutine() {
   )
 }
 
-type IntakeCardProps = {
+type DoseCardProps = {
   name: string
   brand: string
   potency: string
   dosage: string
-  status: IntakeLog["status"]
+  status: DoseStatus
   onConfirm: () => void
   onSnooze: () => void
 }
 
-function IntakeCard({ name, brand, potency, dosage, status, onConfirm, onSnooze }: IntakeCardProps) {
+function DoseCard({ name, brand, potency, dosage, status, onConfirm, onSnooze }: DoseCardProps) {
   return (
     <div
       className={cn(
@@ -230,7 +208,7 @@ function IntakeCard({ name, brand, potency, dosage, status, onConfirm, onSnooze 
           <button
             type="button"
             onClick={onSnooze}
-            aria-label="Snooze intake"
+            aria-label="Snooze dose"
             title="Snooze"
             className={cn(
               "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border bg-card transition-all hover:bg-secondary active:scale-95",

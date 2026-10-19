@@ -18,7 +18,7 @@ const supplement: Supplement = {
   cycleActiveDays: 3,
   cycleBreakDays: 2,
   days: [1, 2, 3, 4, 5, 6, 0],
-  times: ["08:00 AM"],
+  times: ["08:00"],
   totalCount: 60,
   currentCount: 60,
   restockReminder: true,

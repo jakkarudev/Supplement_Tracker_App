@@ -1,12 +1,22 @@
-import type { IntakeLog, Supplement, WellnessLog } from "./supplements-data"
+import type { DoseLog, DoseStatus, Supplement, WellnessLog } from "./supplements-data"
+import { normalizeTimeOfDay } from "./time"
 
 type AppStateShape = {
   supplements: Supplement[]
-  intakeLogs: IntakeLog[]
+  doseLogs: DoseLog[]
   wellnessLogs: WellnessLog[]
 }
 
+type StoredAppState = {
+  supplements?: unknown
+  doseLogs?: unknown
+  intakeLogs?: unknown
+  wellnessLogs?: unknown
+}
+
 const LEGACY_STARTED_ON = "1970-01-01"
+const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+const DOSE_STATUSES: readonly DoseStatus[] = ["taken", "pending", "snoozed"]
 
 const HISTORICAL_DRAFTS = [
   {
@@ -82,7 +92,31 @@ const HISTORICAL_DRAFTS = [
 ] as const
 
 function emptyState(): AppStateShape {
-  return { supplements: [], intakeLogs: [], wellnessLogs: [] }
+  return { supplements: [], doseLogs: [], wellnessLogs: [] }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object"
+}
+
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string") return false
+  const match = CALENDAR_DATE.exec(value)
+  if (!match) return false
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(year, month - 1, day)
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  )
+}
+
+function isDoseStatus(value: unknown): value is DoseStatus {
+  return DOSE_STATUSES.includes(value as DoseStatus)
 }
 
 function positiveOptionalNumber(value: unknown): number | undefined {
@@ -98,8 +132,17 @@ function sameStringArray(a: unknown, b: readonly string[]): boolean {
   return Array.isArray(a) && a.length === b.length && a.every((value, index) => value === b[index])
 }
 
+function normalizeTimes(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+
+  const times = value
+    .map(normalizeTimeOfDay)
+    .filter((time): time is string => time !== null)
+  return [...new Set(times)]
+}
+
 function normalizeSupplement(value: unknown): Supplement | null {
-  if (!value || typeof value !== "object") return null
+  if (!isRecord(value)) return null
   const s = value as Partial<Supplement>
   if (!s.id || !s.name || !s.form) return null
 
@@ -117,7 +160,7 @@ function normalizeSupplement(value: unknown): Supplement | null {
     cycleActiveDays: positiveOptionalNumber(s.cycleActiveDays),
     cycleBreakDays: positiveOptionalNumber(s.cycleBreakDays),
     days: Array.isArray(s.days) ? s.days : [],
-    times: Array.isArray(s.times) ? s.times : [],
+    times: normalizeTimes(s.times),
     totalCount: Number.isFinite(s.totalCount) ? Number(s.totalCount) : 0,
     currentCount: Number.isFinite(s.currentCount) ? Number(s.currentCount) : 0,
     restockReminder: s.restockReminder ?? true,
@@ -125,10 +168,27 @@ function normalizeSupplement(value: unknown): Supplement | null {
   }
 }
 
-function isUnreferencedHistoricalDraft(value: unknown, intakeLogs: IntakeLog[]): boolean {
-  if (!value || typeof value !== "object") return false
+function normalizeDoseLog(value: unknown): DoseLog | null {
+  if (!isRecord(value)) return null
+
+  const { id, supplementId, date, time, status } = value
+  if (typeof id !== "string" || id.length === 0) return null
+  if (typeof supplementId !== "string" || supplementId.length === 0) return null
+  if (!isCalendarDate(date)) return null
+  if (!isDoseStatus(status)) return null
+
+  const normalizedTime = normalizeTimeOfDay(time)
+  if (!normalizedTime) return null
+
+  return { id, supplementId, date, time: normalizedTime, status }
+}
+
+function isUnreferencedHistoricalDraft(value: unknown, rawLogs: unknown[]): boolean {
+  if (!isRecord(value)) return false
   const s = value as Partial<Supplement>
-  if (!s.id || intakeLogs.some((log) => log.supplementId === s.id)) return false
+  if (!s.id || rawLogs.some((log) => isRecord(log) && log.supplementId === s.id)) {
+    return false
+  }
 
   return HISTORICAL_DRAFTS.some(
     (draft) =>
@@ -148,17 +208,28 @@ function isUnreferencedHistoricalDraft(value: unknown, intakeLogs: IntakeLog[]):
 }
 
 export function migrateStoredAppState(raw: unknown): AppStateShape {
-  if (!raw || typeof raw !== "object") return emptyState()
-  const input = raw as Partial<AppStateShape>
-  const intakeLogs = Array.isArray(input.intakeLogs) ? input.intakeLogs : []
-  const wellnessLogs = Array.isArray(input.wellnessLogs) ? input.wellnessLogs : []
-  const supplements = Array.isArray(input.supplements)
-    ? input.supplements
-        .filter((s) => !isUnreferencedHistoricalDraft(s, intakeLogs))
-        .map(normalizeSupplement)
-        .filter((s): s is Supplement => s !== null)
+  if (!isRecord(raw)) return emptyState()
+  const input = raw as StoredAppState
+
+  // Current storage writes doseLogs. Legacy state wrote intakeLogs; on a
+  // rehydrate with both keys present the current key wins.
+  const rawDoseLogs = Array.isArray(input.doseLogs)
+    ? input.doseLogs
+    : Array.isArray(input.intakeLogs)
+      ? input.intakeLogs
+      : []
+  const wellnessLogs = Array.isArray(input.wellnessLogs)
+    ? (input.wellnessLogs as WellnessLog[])
     : []
+  const rawSupplements = Array.isArray(input.supplements) ? input.supplements : []
 
-  return { supplements, intakeLogs, wellnessLogs }
+  const doseLogs = rawDoseLogs
+    .map(normalizeDoseLog)
+    .filter((log): log is DoseLog => log !== null)
+  const supplements = rawSupplements
+    .filter((s) => !isUnreferencedHistoricalDraft(s, rawDoseLogs))
+    .map(normalizeSupplement)
+    .filter((s): s is Supplement => s !== null)
+
+  return { supplements, doseLogs, wellnessLogs }
 }
-

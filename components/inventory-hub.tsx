@@ -148,7 +148,7 @@ function InventoryRow({
                     <DrawerHeader>
                       <DrawerTitle>Remove {supplement.name}?</DrawerTitle>
                       <DrawerDescription>
-                        This will permanently delete this supplement and all its intake history.
+                        This will permanently delete this supplement and all its dose history.
                       </DrawerDescription>
                     </DrawerHeader>
                     <DrawerFooter>
@@ -181,7 +181,7 @@ function InventoryRow({
                     <AlertDialogHeader>
                       <AlertDialogTitle>Remove {supplement.name}?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This will permanently delete this supplement and all its intake history.
+                        This will permanently delete this supplement and all its dose history.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

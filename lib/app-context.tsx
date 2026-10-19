@@ -10,7 +10,7 @@ import {
 } from "react"
 import {
   type Supplement,
-  type IntakeLog,
+  type DoseLog,
   type WellnessLog,
 } from "@/lib/supplements-data"
 import { nanoid } from "@/lib/nanoid"
@@ -23,7 +23,7 @@ import { isSupplementScheduledOnDate } from "@/lib/supplement-schedule"
 
 export type AppState = {
   supplements: Supplement[]
-  intakeLogs: IntakeLog[]
+  doseLogs: DoseLog[]
   wellnessLogs: WellnessLog[]
 }
 
@@ -34,7 +34,7 @@ export type Action =
   | { type: "ADD_SUPPLEMENT"; payload: Supplement }
   | { type: "UPDATE_SUPPLEMENT"; payload: Supplement }
   | { type: "DELETE_SUPPLEMENT"; payload: string }
-  | { type: "LOG_INTAKE"; payload: IntakeLog }
+  | { type: "LOG_DOSE"; payload: DoseLog }
   | { type: "LOG_WELLNESS"; payload: WellnessLog }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -76,19 +76,19 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         supplements: state.supplements.filter((s) => s.id !== action.payload),
-        intakeLogs: state.intakeLogs.filter(
+        doseLogs: state.doseLogs.filter(
           (l) => l.supplementId !== action.payload,
         ),
       }
 
-    case "LOG_INTAKE": {
-      const existingIdx = state.intakeLogs.findIndex(
+    case "LOG_DOSE": {
+      const existingIdx = state.doseLogs.findIndex(
         (l) =>
           l.supplementId === action.payload.supplementId &&
           l.date === action.payload.date &&
           l.time === action.payload.time,
       )
-      const existingLog = state.intakeLogs[existingIdx]
+      const existingLog = state.doseLogs[existingIdx]
 
       // Guard: never double-decrement inventory
       const alreadyTaken = existingLog?.status === "taken"
@@ -96,10 +96,10 @@ function reducer(state: AppState, action: Action): AppState {
 
       const newLogs =
         existingIdx >= 0
-          ? state.intakeLogs.map((l, i) =>
+          ? state.doseLogs.map((l, i) =>
               i === existingIdx ? action.payload : l,
             )
-          : [...state.intakeLogs, action.payload]
+          : [...state.doseLogs, action.payload]
 
       // Decrement inventory only on first "taken" for this dose
       let supplements = state.supplements
@@ -111,7 +111,7 @@ function reducer(state: AppState, action: Action): AppState {
         })
       }
 
-      return { ...state, supplements, intakeLogs: newLogs }
+      return { ...state, supplements, doseLogs: newLogs }
     }
 
     case "LOG_WELLNESS": {
@@ -136,7 +136,7 @@ function reducer(state: AppState, action: Action): AppState {
 
 const INITIAL_STATE: AppState = {
   supplements: [],
-  intakeLogs: [],
+  doseLogs: [],
   wellnessLogs: [],
 }
 
@@ -211,7 +211,7 @@ export function useAppDispatch() {
 
 /** Returns 7-day adherence stats and chart data derived from stored logs. */
 export function useAdherenceStats() {
-  const { supplements, intakeLogs, wellnessLogs } = useAppState()
+  const { supplements, doseLogs, wellnessLogs } = useAppState()
 
   return useMemo(() => {
     // Build an array of the last 7 days in local time ("YYYY-MM-DD")
@@ -230,7 +230,7 @@ export function useAdherenceStats() {
       )
       if (scheduled.length === 0) return null  // nothing scheduled → don't count
       const takenCount = scheduled.filter(({ sid, time }) =>
-        intakeLogs.some(
+        doseLogs.some(
           (l) =>
             l.supplementId === sid &&
             l.date === date &&
@@ -273,8 +273,8 @@ export function useAdherenceStats() {
     )
 
     return { adherenceRate, streak, chartData, lowStock }
-  }, [supplements, intakeLogs, wellnessLogs])
+  }, [supplements, doseLogs, wellnessLogs])
 }
 
-/** Generate a stable ID for a supplement intake action. */
+/** Generate a stable ID for a supplement dose action. */
 export { nanoid }

@@ -1,4 +1,4 @@
-export type IntakeStatus = "taken" | "pending" | "snoozed"
+export type DoseStatus = "taken" | "pending" | "snoozed"
 
 export type SupplementForm = "Capsule" | "Tablet" | "Liquid" | "Powder"
 
@@ -16,28 +16,19 @@ export type Supplement = {
   cycleActiveDays?: number
   cycleBreakDays?: number
   days: number[] // 0 = Sun ... 6 = Sat
-  times: string[] // "08:00 AM"
+  times: string[] // "HH:mm", 24-hour
   totalCount: number
   currentCount: number
   restockReminder: boolean
   restockThreshold: number
 }
 
-export type Intake = {
-  id: string
-  supplementId: string
-  time: string
-  period: "Morning" | "Afternoon" | "Evening" | "Night"
-  status: IntakeStatus
-}
-
-export type IntakeLog = {
+export type DoseLog = {
   id: string
   supplementId: string
   date: string   // "YYYY-MM-DD"
-  time: string   // "08:00 AM"
-  period: "Morning" | "Afternoon" | "Evening" | "Night"
-  status: IntakeStatus
+  time: string   // "HH:mm", 24-hour
+  status: DoseStatus
 }
 
 export type WellnessLog = {
@@ -47,14 +38,6 @@ export type WellnessLog = {
 }
 
 export const supplements: Supplement[] = []
-
-export const todayIntakes: Intake[] = [
-  { id: "i1", supplementId: "vit-d3", time: "08:00 AM", period: "Morning", status: "taken" },
-  { id: "i2", supplementId: "omega-3", time: "08:00 AM", period: "Morning", status: "taken" },
-  { id: "i3", supplementId: "creatine", time: "12:30 PM", period: "Afternoon", status: "pending" },
-  { id: "i4", supplementId: "magnesium", time: "08:00 PM", period: "Evening", status: "pending" },
-  { id: "i5", supplementId: "ashwagandha", time: "08:00 PM", period: "Evening", status: "snoozed" },
-]
 
 export function getSupplement(id: string) {
   return supplements.find((s) => s.id === id)
