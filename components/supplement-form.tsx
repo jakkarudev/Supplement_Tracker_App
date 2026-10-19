@@ -29,6 +29,7 @@ import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
+import { requestReminderPermission } from "@/lib/reminders"
 import { today } from "@/lib/day-regimen"
 import {
   SOLID_DOSAGE_OPTIONS,
@@ -239,7 +240,7 @@ export function SupplementForm({ editingId, onDone }: Props) {
     setTimeInputs((prev) => prev.map((t, i) => (i === idx ? value : t)))
   }
 
-  function onSubmit(values: FormValues) {
+  async function onSubmit(values: FormValues) {
     // The supplement can disappear while this form is open: deleted in
     // another tab, or an adoption replaced the store. Saving the old record
     // would resurrect an intentional deletion, so report it instead.
@@ -258,6 +259,12 @@ export function SupplementForm({ editingId, onDone }: Props) {
     const durationDays = values.durationMode === "limited" ? values.durationDays : undefined
     const cycleActiveDays = values.cycleEnabled ? values.cycleActiveDays : undefined
     const cycleBreakDays = values.cycleEnabled ? values.cycleBreakDays : undefined
+
+    // Ask from the save gesture, while the decision is still pending. The
+    // dispatch below then triggers a sync that sees the final permission.
+    // A failed request must not block the save.
+    await requestReminderPermission()
+
     if (editing) {
       dispatch({
         type: "UPDATE_SUPPLEMENT",

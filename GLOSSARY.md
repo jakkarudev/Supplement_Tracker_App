@@ -80,6 +80,24 @@ _Avoid_: compliance, consistency
 The number of consecutive completed days with full adherence.
 _Avoid_: consistency streak, run
 
+### Reminders
+
+**Reminder**:
+A prompt to log the scheduled doses due at one time of day on one calendar date.
+_Avoid_: notification, alert, push
+
+**Reminder Plan**:
+The set of reminders the app wants pending at a given moment, derived from the regimen and dose logs.
+_Avoid_: notification schedule, reminder queue
+
+**Pending Reminder**:
+A reminder currently registered with the operating system.
+_Avoid_: scheduled notification, alarm
+
+**Reminder Sync**:
+Reconciling pending reminders with the current reminder plan.
+_Avoid_: reschedule, refresh, rebuild
+
 ### Storage recovery
 
 **Dropped Record**:

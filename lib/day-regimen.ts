@@ -65,7 +65,8 @@ function localDateFromCalendarDate(date: CalendarDate): Date {
   return new Date(year, month - 1, day)
 }
 
-function calendarDateFromLocalDate(date: Date): CalendarDate {
+/** Formats a local Date as a Calendar Date. */
+export function calendarDateFrom(date: Date): CalendarDate {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, "0")
   const day = String(date.getDate()).padStart(2, "0")
@@ -91,14 +92,14 @@ export function isCalendarDate(value: unknown): value is CalendarDate {
 
 /** Returns today's local calendar date as "YYYY-MM-DD". */
 export function today(): CalendarDate {
-  return calendarDateFromLocalDate(new Date())
+  return calendarDateFrom(new Date())
 }
 
 /** Adds calendar days to a date, keeping local-date behavior. */
 export function addDays(date: CalendarDate, days: number): CalendarDate {
   const next = localDateFromCalendarDate(date)
   next.setDate(next.getDate() + days)
-  return calendarDateFromLocalDate(next)
+  return calendarDateFrom(next)
 }
 
 /** Parses a calendar date to local day-of-week (0=Sun … 6=Sat). */
@@ -110,7 +111,7 @@ export function dayOfWeek(date: CalendarDate): number {
 export function weekDates(date: CalendarDate): CalendarDate[] {
   const sunday = localDateFromCalendarDate(date)
   sunday.setDate(sunday.getDate() - sunday.getDay())
-  return Array.from({ length: 7 }, (_, index) => addDays(calendarDateFromLocalDate(sunday), index))
+  return Array.from({ length: 7 }, (_, index) => addDays(calendarDateFrom(sunday), index))
 }
 
 /** Formats a calendar date as a local UI label. */

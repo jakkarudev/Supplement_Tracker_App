@@ -17,7 +17,10 @@ import {
 } from "@/lib/supplements-data"
 import type { AppState } from "@/lib/app-state"
 import { nanoid } from "@/lib/nanoid"
-import { scheduleNativeSupplementReminders } from "@/lib/reminders"
+import {
+  scheduleNativeSupplementReminders,
+  type ReminderPlanInput,
+} from "@/lib/reminders"
 import {
   addSupplement,
   deleteSupplement,
@@ -200,6 +203,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // next local action (a new object) still saves.
   const adoptedState = useRef<AppState | null>(null)
 
+  // Resume listeners outlive any single render, so they read the newest
+  // committed state and status through this ref.
+  const latest = useRef({ state, status })
+
+  useEffect(() => {
+    latest.current = { state, status }
+  }, [state, status])
+
+  const syncRemindersFromState = useCallback((input: ReminderPlanInput) => {
+    void scheduleNativeSupplementReminders(input).then((result) => {
+      if (result.status === "error") {
+        console.warn("Unable to sync supplement reminders", result.error)
+      }
+    })
+  }, [])
+
   /**
    * Routes a load result to state and toasts. A cold start and an external
    * write share this path, with one difference: an external adoption is
@@ -292,6 +311,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     function handleResume() {
       if (document.visibilityState === "hidden") return
       storage.refresh()
+
+      // refresh() only notifies when the stored payload changed, so a
+      // returned tab must re-plan explicitly too. A run that overlaps the
+      // adoption effect coalesces onto the newest state.
+      const { state: latestState, status: latestStatus } = latest.current
+      if (latestStatus === "ready" || latestStatus === "recovered") {
+        syncRemindersFromState({
+          supplements: latestState.supplements,
+          doseLogs: latestState.doseLogs,
+        })
+      }
     }
 
     document.addEventListener("visibilitychange", handleResume)
@@ -302,7 +332,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", handleResume)
       window.removeEventListener("pageshow", handleResume)
     }
-  }, [applyLoadResult])
+  }, [applyLoadResult, syncRemindersFromState])
 
   // Persist after hydration: once for a loaded payload and on every change
   // after that. A recovered load also writes once here, which saves the
@@ -341,18 +371,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state, status])
 
-  // Recovered loads carry salvageable supplements too, so they schedule
-  // reminders like any loaded state. Incompatible and unavailable loads
-  // hydrate empty and never schedule.
+  // Re-plan when hydration completes and whenever the regimen or dose logs
+  // change. The sync only checks permission; asking for it belongs to a
+  // successful supplement save.
   useEffect(() => {
     if (status !== "ready" && status !== "recovered") return
-
-    void scheduleNativeSupplementReminders(state.supplements).then((result) => {
-      if (result.status === "error") {
-        console.warn("Unable to schedule supplement reminders", result.error)
-      }
+    syncRemindersFromState({
+      supplements: state.supplements,
+      doseLogs: state.doseLogs,
     })
-  }, [state.supplements, status])
+  }, [state.supplements, state.doseLogs, status, syncRemindersFromState])
 
   return (
     <StateCtx.Provider value={state}>
