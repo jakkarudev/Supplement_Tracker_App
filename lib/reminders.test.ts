@@ -64,6 +64,11 @@ describe("syncSupplementReminders", () => {
       expect.objectContaining({
         title: "Time for Creatine Monohydrate",
         channelId: "supplement-reminders",
+        extra: expect.objectContaining({
+          kind: "supplement-reminder",
+          supplementId: "creatine",
+          time: "12:00",
+        }),
       }),
     )
   })

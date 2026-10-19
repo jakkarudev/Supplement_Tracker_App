@@ -1,7 +1,6 @@
 import type { LocalNotificationSchema } from "@capacitor/local-notifications"
 import type { Supplement } from "./supplements-data"
-import { upcomingScheduledDates } from "./supplement-schedule"
-import { clockFromTime, today } from "./day-regimen"
+import { clockFromTime, today, upcomingScheduledDoses } from "./day-regimen"
 
 export const REMINDER_CHANNEL_ID = "supplement-reminders"
 const REMINDER_HORIZON_DAYS = 30
@@ -32,29 +31,26 @@ export function buildSupplementReminderNotifications(
   fromDate = today(),
   horizonDays = REMINDER_HORIZON_DAYS,
 ): LocalNotificationSchema[] {
-  return supplements.flatMap((supplement) =>
-    upcomingScheduledDates(supplement, fromDate, horizonDays).flatMap((date) =>
-      supplement.times.map((time) => {
-        const { hour, minute } = clockFromTime(time)
-        const dose = [supplement.dosage, supplement.potency].filter(Boolean).join(" · ")
+  return upcomingScheduledDoses(supplements, fromDate, horizonDays).map((scheduled) => {
+    const { supplement, date, time } = scheduled
+    const { hour, minute } = clockFromTime(time)
+    const dose = [supplement.dosage, supplement.potency].filter(Boolean).join(" · ")
 
-        return {
-          id: notificationIdForReminder(supplement.id, date, time),
-          title: `Time for ${supplement.name}`,
-          body: dose || "Log this supplement.",
-          channelId: REMINDER_CHANNEL_ID,
-          schedule: {
-            at: dateTimeFromLocalParts(date, hour, minute),
-            allowWhileIdle: true,
-          },
-          extra: {
-            kind: "supplement-reminder",
-            supplementId: supplement.id,
-            date,
-            time,
-          },
-        } satisfies LocalNotificationSchema
-      }),
-    ),
-  )
+    return {
+      id: notificationIdForReminder(supplement.id, date, time),
+      title: `Time for ${supplement.name}`,
+      body: dose || "Log this supplement.",
+      channelId: REMINDER_CHANNEL_ID,
+      schedule: {
+        at: dateTimeFromLocalParts(date, hour, minute),
+        allowWhileIdle: true,
+      },
+      extra: {
+        kind: "supplement-reminder",
+        supplementId: supplement.id,
+        date,
+        time,
+      },
+    } satisfies LocalNotificationSchema
+  })
 }
