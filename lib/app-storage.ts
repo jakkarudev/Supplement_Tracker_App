@@ -3,6 +3,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   detectSchemaVersion,
   migrateStoredAppState,
+  type DroppedRecordCounts,
 } from "./storage-migration"
 
 /**
@@ -11,24 +12,40 @@ import {
  */
 export const STORAGE_KEY = "regimen-v1"
 
+/** Recovery copies live beside the live key, one per corrupt load. */
+export const BACKUP_KEY_PREFIX = `${STORAGE_KEY}.corrupt.`
+
+/** Keep only this many of the newest recovery copies. */
+const MAX_BACKUPS = 3
+
 /** The minimal Web Storage surface the seam needs. */
 export type StorageAdapter = {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
+  removeItem(key: string): void
+  keys(): string[]
 }
 
 /**
  * The outcome of a load. `ok` carries the canonical state and the version it
  * was migrated from (null when it was already current); `empty` means nothing
  * usable was stored; `unavailable` means storage itself could not be reached,
- * so the app must stay usable in memory and never write; `failed` carries the
- * error that stopped the load for every other case. Recovery (#23) and the
- * typed newer-version result (#24) refine the remaining `failed` cases.
+ * so the app must stay usable in memory and never write; `recovered` means the
+ * stored payload lost data and a verbatim backup was written before the
+ * salvaged state is saved back; `failed` carries the error that stopped the
+ * load for every other case. The typed newer-version result (#24) refines the
+ * remaining `failed` cases.
  */
 export type LoadStateResult =
   | { status: "ok"; state: AppState; migratedFrom: number | null }
   | { status: "empty" }
   | { status: "unavailable"; error: unknown }
+  | {
+      status: "recovered"
+      state: AppState
+      backupKey: string
+      dropped: DroppedRecordCounts
+    }
   | { status: "failed"; error: unknown }
 
 export type SaveFailureReason = "quota" | "unavailable" | "unknown"
@@ -50,6 +67,58 @@ function serializeState(state: AppState): string {
     doseLogs: state.doseLogs,
     wellnessLogs: state.wellnessLogs,
   })
+}
+
+function emptyState(): AppState {
+  return { supplements: [], doseLogs: [], wellnessLogs: [] }
+}
+
+function noDrops(): DroppedRecordCounts {
+  return { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
+}
+
+function hasDroppedRecords(dropped: DroppedRecordCounts): boolean {
+  return dropped.supplements + dropped.doseLogs + dropped.wellnessLogs > 0
+}
+
+/**
+ * Writes the raw stored string verbatim to a timestamped backup key before
+ * anything can overwrite it, then prunes older copies. Throws when the backup
+ * or pruning cannot be written, so the caller can leave the original alone.
+ */
+function backupPayload(adapter: StorageAdapter, raw: string): string {
+  const backupKey = `${BACKUP_KEY_PREFIX}${new Date().toISOString()}`
+  adapter.setItem(backupKey, raw)
+  pruneBackups(adapter)
+  return backupKey
+}
+
+/** Keeps only the three newest backup keys; ISO timestamps sort oldest first. */
+function pruneBackups(adapter: StorageAdapter): void {
+  const backupKeys = adapter
+    .keys()
+    .filter((key) => key.startsWith(BACKUP_KEY_PREFIX))
+    .sort()
+
+  for (const key of backupKeys.slice(0, Math.max(0, backupKeys.length - MAX_BACKUPS))) {
+    adapter.removeItem(key)
+  }
+}
+
+type ParsedPayload =
+  | { status: "parsed"; value: unknown }
+  | { status: "unparseable" }
+
+/**
+ * Parses the raw payload without throwing. An unparseable payload is
+ * reported as such so the load can back it up before recovering.
+ */
+function parsePayload(raw: string): ParsedPayload {
+  try {
+    return { status: "parsed", value: JSON.parse(raw) }
+  } catch {
+    return { status: "unparseable" }
+  }
 }
 
 /**
@@ -82,14 +151,34 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
           return { status: "empty" }
         }
 
-        const parsed = JSON.parse(raw)
-        const detection = detectSchemaVersion(parsed)
-        if (detection.status !== "ok") {
-          writesDisabled = true
-          return {
-            status: "failed",
-            error: new Error("Stored payload is not a state object"),
+        const storedPayload = raw
+
+        // Backs the raw payload up verbatim before any write can follow and
+        // returns the recovered result. A backup that cannot be written
+        // leaves the original untouched and makes the load unavailable, so
+        // no write follows it either.
+        const recover = (
+          state: AppState,
+          dropped: DroppedRecordCounts,
+        ): LoadStateResult => {
+          try {
+            const backupKey = backupPayload(adapter, storedPayload)
+            writesDisabled = false
+            return { status: "recovered", state, backupKey, dropped }
+          } catch (error) {
+            writesDisabled = true
+            return { status: "unavailable", error }
           }
+        }
+
+        const parsed = parsePayload(storedPayload)
+        if (parsed.status === "unparseable") {
+          return recover(emptyState(), noDrops())
+        }
+
+        const detection = detectSchemaVersion(parsed.value)
+        if (detection.status !== "ok") {
+          return recover(emptyState(), noDrops())
         }
         if (detection.version > CURRENT_SCHEMA_VERSION) {
           writesDisabled = true
@@ -101,13 +190,17 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
           }
         }
 
-        const migration = migrateStoredAppState(parsed)
+        const migration = migrateStoredAppState(parsed.value)
         if (migration.status !== "ok") {
           writesDisabled = true
           return {
             status: "failed",
             error: new Error("Stored payload could not be normalized"),
           }
+        }
+
+        if (hasDroppedRecords(migration.dropped)) {
+          return recover(migration.state, migration.dropped)
         }
 
         writesDisabled = false
@@ -160,5 +253,16 @@ export const localStorageAdapter: StorageAdapter = {
   },
   setItem(key, value) {
     window.localStorage.setItem(key, value)
+  },
+  removeItem(key) {
+    window.localStorage.removeItem(key)
+  },
+  keys() {
+    const keys: string[] = []
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index)
+      if (key !== null) keys.push(key)
+    }
+    return keys
   },
 }

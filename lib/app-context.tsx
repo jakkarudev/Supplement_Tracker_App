@@ -9,6 +9,7 @@ import {
   useState,
   useMemo,
 } from "react"
+import { toast } from "sonner"
 import {
   type Supplement,
   type WellnessLog,
@@ -28,7 +29,7 @@ import {
   localStorageAdapter,
   type SaveFailureReason,
 } from "@/lib/app-storage"
-import { toast } from "sonner"
+import type { DroppedRecordCounts } from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
@@ -102,15 +103,17 @@ const INITIAL_STATE: AppState = {
 const storage = createAppStorage(localStorageAdapter)
 
 /**
- * The provider's hydration status. `unavailable` means storage could not be
- * reached at load time: the provider serves the empty state, warns once that
- * changes will not be saved, and never writes. `failed` is the stopgap for
- * every other failed load — an unreadable payload, an invalid shape, or a
- * version newer than this build: the provider hydrates empty and never writes,
- * so the stored payload is left untouched. #23–#24 split it further into
- * recovered and incompatible as recovery and the newer-version guard land.
+ * The provider's hydration status. `recovered` means the payload lost data,
+ * was backed up, and the salvaged state should be written back in the current
+ * format. `unavailable` means storage could not be reached at load time: the
+ * provider serves the empty state, warns once that changes will not be saved,
+ * and never writes. `failed` is the stopgap for every other failed load — an
+ * unreadable payload, an invalid shape, or a version newer than this build:
+ * the provider hydrates empty and never writes, so the stored payload is left
+ * untouched. #24 splits it further into incompatible as the newer-version
+ * guard lands.
  */
-type HydrationStatus = "loading" | "ready" | "unavailable" | "failed"
+type HydrationStatus = "loading" | "ready" | "recovered" | "unavailable" | "failed"
 
 /** The description shown when a save fails, keyed by its classified reason. */
 const SAVE_FAILURE_DESCRIPTIONS: Record<SaveFailureReason, string> = {
@@ -121,6 +124,25 @@ const SAVE_FAILURE_DESCRIPTIONS: Record<SaveFailureReason, string> = {
 
 const StateCtx = createContext<AppState>(INITIAL_STATE)
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
+
+function totalDropped(dropped: DroppedRecordCounts): number {
+  return dropped.supplements + dropped.doseLogs + dropped.wellnessLogs
+}
+
+/**
+ * Toasts the backup location and how much was lost. The per-collection
+ * details go to the console so the one-line summary stays readable.
+ */
+function announceRecovery(backupKey: string, dropped: DroppedRecordCounts) {
+  const total = totalDropped(dropped)
+  console.warn("Recovered stored data", { backupKey, dropped })
+
+  toast.warning(
+    total === 0
+      ? `Recovered your data from a damaged store; no records were dropped. Backup saved as ${backupKey}.`
+      : `Recovered your data; ${total} record${total === 1 ? "" : "s"} were dropped. Backup saved as ${backupKey}.`,
+  )
+}
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   // Always render the same initial state on server and first client pass.
@@ -148,6 +170,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setStatus("ready")
         return
 
+      case "recovered":
+        announceRecovery(result.backupKey, result.dropped)
+        dispatch({ type: "HYDRATE", payload: result.state })
+        setStatus("recovered")
+        return
+
       case "empty":
         freshInstall.current = true
         setStatus("ready")
@@ -171,10 +199,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   // Persist after hydration: once for a loaded payload and on every change
-  // after that. Nothing is written while loading, while storage is
-  // unavailable, or after a failed load.
+  // after that. A recovered load also writes once here, which saves the
+  // salvaged state back in the current format so recovery cannot repeat.
+  // Nothing is written while loading, while storage is unavailable, or after
+  // a failed load.
   useEffect(() => {
-    if (status !== "ready") return
+    if (status !== "ready" && status !== "recovered") return
 
     if (freshInstall.current) {
       freshInstall.current = false
