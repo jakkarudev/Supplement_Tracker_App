@@ -22,14 +22,16 @@ export type StorageAdapter = {
  * was migrated from (null when it was already current); `empty` means nothing
  * usable was stored; `incompatible` carries the stored version when it is
  * newer than this build, and means the payload is never migrated or written
- * over; `failed` carries the error that stopped the load. The spec splits
- * `failed` further into recovered and unavailable as recovery (#23) and
- * storage availability (#25) land.
+ * over; `unavailable` means storage itself could not be reached, so the app
+ * must stay usable in memory and never write; `failed` carries the error that
+ * stopped the load for every other case. Recovery (#23) refines the remaining
+ * `failed` cases.
  */
 export type LoadStateResult =
   | { status: "ok"; state: AppState; migratedFrom: number | null }
   | { status: "empty" }
   | { status: "incompatible"; version: number }
+  | { status: "unavailable"; error: unknown }
   | { status: "failed"; error: unknown }
 
 export type SaveFailureReason = "quota" | "unavailable" | "unknown"
@@ -67,8 +69,17 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
 
   return {
     loadState() {
+      let raw: string | null
       try {
-        const raw = adapter.getItem(STORAGE_KEY)
+        raw = adapter.getItem(STORAGE_KEY)
+      } catch (error) {
+        // Storage itself is unreachable (blocked, denied, or missing). The
+        // app keeps working in memory, but no write may follow this load.
+        writesDisabled = true
+        return { status: "unavailable", error }
+      }
+
+      try {
         if (raw === null || raw === "") {
           writesDisabled = false
           return { status: "empty" }

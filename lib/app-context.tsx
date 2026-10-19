@@ -23,8 +23,12 @@ import {
   updateSupplement,
   type LogDoseInput,
 } from "@/lib/regimen-actions"
+import {
+  createAppStorage,
+  localStorageAdapter,
+  type SaveFailureReason,
+} from "@/lib/app-storage"
 import { toast } from "sonner"
-import { createAppStorage, localStorageAdapter } from "@/lib/app-storage"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
@@ -100,11 +104,25 @@ const storage = createAppStorage(localStorageAdapter)
 /**
  * The provider's hydration status. `incompatible` means the stored payload was
  * written by a newer build: the provider hydrates empty, toasts why, and never
- * writes, so the payload is left untouched. `failed` is the stopgap for the
+ * writes, so the payload is left untouched. `unavailable` means storage could
+ * not be reached at load time: the provider serves the empty state, warns that
+ * changes will not be saved, and never writes. `failed` is the stopgap for the
  * remaining load failures — an unreadable payload or an invalid shape — and is
- * split into recovered and unavailable as #23 and #25 land.
+ * split into recovered as #23 lands.
  */
-type HydrationStatus = "loading" | "ready" | "incompatible" | "failed"
+type HydrationStatus =
+  | "loading"
+  | "ready"
+  | "incompatible"
+  | "unavailable"
+  | "failed"
+
+/** The description shown when a save fails, keyed by its classified reason. */
+const SAVE_FAILURE_DESCRIPTIONS: Record<SaveFailureReason, string> = {
+  quota: "Storage is full. Your latest changes are not saved.",
+  unavailable: "Storage is unavailable. Changes are not being saved.",
+  unknown: "Storage is failing. Your latest changes are not saved.",
+}
 
 const StateCtx = createContext<AppState>(INITIAL_STATE)
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
@@ -120,6 +138,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // hydration consumes it so a fresh install writes nothing until the user
   // actually changes something.
   const freshInstall = useRef(false)
+
+  // True while saves keep failing; a failed save logs every time but toasts
+  // only when this flips, so one failure streak warns once. A successful save
+  // resets it so the next streak warns again.
+  const saveFailureActive = useRef(false)
 
   useEffect(() => {
     const result = storage.loadState()
@@ -145,6 +168,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setStatus("incompatible")
         return
 
+      case "unavailable":
+        // Storage could not be reached. Serve the empty state (already the
+        // initial state), warn that nothing will be saved, and keep writes
+        // off so the session stays usable in memory only.
+        toast.error("Storage is unavailable", {
+          description: "Changes will not be saved during this session.",
+        })
+        setStatus("unavailable")
+        return
+
       default:
         // The load failed and the payload was left untouched. Never enable
         // writes after a failed read.
@@ -153,8 +186,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   // Persist after hydration: once for a loaded payload and on every change
-  // after that. Nothing is written while loading, after a failed load, or when
-  // the stored data is incompatible with this build.
+  // after that. Nothing is written while loading, while storage is
+  // unavailable, after a failed load, or when the stored data is incompatible
+  // with this build.
   useEffect(() => {
     if (status !== "ready") return
 
@@ -163,8 +197,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return
     }
 
-    storage.saveState(state)
-    // Save failures are classified by the seam; #25 surfaces them to the user.
+    const result = storage.saveState(state)
+
+    if (result.status === "saved") {
+      saveFailureActive.current = false
+      return
+    }
+
+    console.error(`Failed to save app state (${result.reason})`, result.error)
+    if (!saveFailureActive.current) {
+      saveFailureActive.current = true
+      toast.error("Changes could not be saved", {
+        description: SAVE_FAILURE_DESCRIPTIONS[result.reason],
+      })
+    }
   }, [state, status])
 
   useEffect(() => {
