@@ -273,6 +273,43 @@ describe("migrateStoredAppState", () => {
     expect(state.doseLogs.map((log) => log.id)).toEqual(["valid"])
   })
 
+  it("preserves recorded inventory amounts on taken logs only", () => {
+    const state = migrateStoredAppState({
+      supplements: [legacySupplement],
+      doseLogs: [
+        {
+          id: "with-amount",
+          supplementId: "custom-magnesium",
+          date: "2026-05-01",
+          time: "20:00",
+          status: "taken",
+          inventoryAmount: 2,
+        },
+        {
+          id: "bad-amount",
+          supplementId: "custom-magnesium",
+          date: "2026-05-02",
+          time: "20:00",
+          status: "taken",
+          inventoryAmount: "two",
+        },
+        {
+          id: "snoozed-with-amount",
+          supplementId: "custom-magnesium",
+          date: "2026-05-03",
+          time: "20:00",
+          status: "snoozed",
+          inventoryAmount: 2,
+        },
+      ],
+      wellnessLogs: [],
+    })
+
+    expect(state.doseLogs[0].inventoryAmount).toBe(2)
+    expect(state.doseLogs[1]).not.toHaveProperty("inventoryAmount")
+    expect(state.doseLogs[2]).not.toHaveProperty("inventoryAmount")
+  })
+
   it("is idempotent for already-canonical state", () => {
     const canonicalState = {
       supplements: [canonicalSupplement],
@@ -283,6 +320,7 @@ describe("migrateStoredAppState", () => {
           date: "2026-05-01",
           time: "20:00",
           status: "taken",
+          inventoryAmount: 2,
         },
       ],
       wellnessLogs: [{ date: "2026-05-01", energy: 7, focus: 8 }],

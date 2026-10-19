@@ -29,6 +29,7 @@ export type DoseLog = {
   date: string   // "YYYY-MM-DD"
   time: string   // "HH:mm", 24-hour
   status: DoseStatus
+  inventoryAmount?: number // consumed when taken; recorded for exact reversal
 }
 
 export type WellnessLog = {

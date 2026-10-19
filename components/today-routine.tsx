@@ -5,7 +5,7 @@ import { BedDouble, Moon, Pill, RotateCcw, Sunrise, Sun, Sunset } from "lucide-r
 import { WeekStrip } from "@/components/week-strip"
 import { StatusBadge } from "@/components/status-badge"
 import { SlideToConfirm } from "@/components/slide-to-confirm"
-import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
+import { useAppState, useAppDispatch } from "@/lib/app-context"
 import type { DoseStatus } from "@/lib/supplements-data"
 import {
   dayRegimen,
@@ -65,7 +65,6 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
     dispatch({
       type: "LOG_DOSE",
       payload: {
-        id: item.log?.id ?? nanoid(),
         supplementId: item.supplement.id,
         date: item.date,
         time: item.time,

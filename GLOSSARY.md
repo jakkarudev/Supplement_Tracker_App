@@ -33,11 +33,11 @@ One occurrence of a supplement at a scheduled time on a calendar date.
 _Avoid_: intake, occurrence, dose (unqualified)
 
 **Dose Log**:
-The record of what happened to a scheduled dose.
+The record of a dose that was taken or snoozed. A dose that was neither has no log.
 _Avoid_: intake, intake log, entry
 
 **Dose Status**:
-The state of a scheduled dose: taken, snoozed, or pending.
+The state of a scheduled dose: taken, snoozed, or pending. Pending means no log exists for the dose.
 _Avoid_: intake status, log status
 
 **Day Regimen**:
@@ -47,6 +47,16 @@ _Avoid_: daily routine, day's intakes
 **Period**:
 A named part of the day used to group scheduled doses: Morning, Afternoon, Evening, or Night.
 _Avoid_: time slot
+
+### Inventory
+
+**Inventory**:
+The amount of a supplement on hand, measured in the units of its dosage.
+_Avoid_: stock, count, supply
+
+**Overdrawn**:
+The state of a supplement whose logged taken doses exceed its recorded inventory, leaving inventory below zero.
+_Avoid_: out of stock, negative stock
 
 ### Calendar and adherence
 
