@@ -5,9 +5,10 @@ import { BedDouble, Moon, Pill, Sunrise, Sun, Sunset } from "lucide-react"
 import { WeekStrip } from "@/components/week-strip"
 import { StatusBadge } from "@/components/status-badge"
 import { SlideToConfirm } from "@/components/slide-to-confirm"
-import { useAppState, useAppDispatch, todayString, dowFromDate, nanoid } from "@/lib/app-context"
+import { useAppState, useAppDispatch, todayString, nanoid } from "@/lib/app-context"
 import type { IntakeLog } from "@/lib/supplements-data"
 import { cn } from "@/lib/utils"
+import { isSupplementScheduledOnDate } from "@/lib/supplement-schedule"
 
 type Period = "Morning" | "Afternoon" | "Evening" | "Night"
 
@@ -52,12 +53,11 @@ export function TodayRoutine() {
   const { supplements, intakeLogs } = useAppState()
   const dispatch = useAppDispatch()
   const today = todayString()
-  const todayDow = dowFromDate(today)
 
   const intakes = useMemo<ScheduledIntake[]>(() => {
     const result: ScheduledIntake[] = []
     for (const s of supplements) {
-      if (!s.days.includes(todayDow)) continue
+      if (!isSupplementScheduledOnDate(s, today)) continue
       for (const time of s.times) {
         const existing =
           intakeLogs.find(
@@ -73,7 +73,7 @@ export function TodayRoutine() {
       }
     }
     return result
-  }, [supplements, intakeLogs, today, todayDow])
+  }, [supplements, intakeLogs, today])
 
   const grouped = useMemo(() => {
     const groups = new Map<string, ScheduledIntake[]>()
