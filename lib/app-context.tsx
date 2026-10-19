@@ -5,6 +5,7 @@ import {
   useContext,
   useReducer,
   useEffect,
+  useRef,
   useState,
   useMemo,
 } from "react"
@@ -22,7 +23,7 @@ import {
   updateSupplement,
   type LogDoseInput,
 } from "@/lib/regimen-actions"
-import { migrateStoredAppState } from "@/lib/storage-migration"
+import { createAppStorage, localStorageAdapter } from "@/lib/app-storage"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
@@ -92,53 +93,77 @@ const INITIAL_STATE: AppState = {
   wellnessLogs: [],
 }
 
-const STORAGE_KEY = "regimen-v1"
+// The seam instance the provider hydrates and persists through.
+const storage = createAppStorage(localStorageAdapter)
+
+/**
+ * The provider's hydration status. `failed` is the stopgap for a load that
+ * reported a failure — an unreadable payload, an invalid shape, or a version
+ * newer than this build: the provider hydrates empty and never writes, so the
+ * stored payload is left untouched. #23–#25 split it into recovered,
+ * incompatible, and unavailable as recovery and toasts land.
+ */
+type HydrationStatus = "loading" | "ready" | "failed"
 
 const StateCtx = createContext<AppState>(INITIAL_STATE)
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   // Always render the same initial state on server and first client pass.
-  // Hydrate from localStorage in an effect to prevent SSR/client mismatches.
+  // Hydrate through the storage seam in an effect to prevent SSR/client
+  // mismatches.
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE)
-  const [hydrated, setHydrated] = useState(false)
+  const [status, setStatus] = useState<HydrationStatus>("loading")
 
-  // Hydrate from localStorage after mount.
+  // Set when hydration found nothing stored. The first persistence pass after
+  // hydration consumes it so a fresh install writes nothing until the user
+  // actually changes something.
+  const freshInstall = useRef(false)
+
   useEffect(() => {
-    let payload: AppState = INITIAL_STATE
+    const result = storage.loadState()
 
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      const parsed = raw ? JSON.parse(raw) : null
-      const migration = migrateStoredAppState(parsed)
-      if (migration.status === "ok") payload = migration.state
-    } catch {
-      // Corrupted storage — keep default state
-    } finally {
-      dispatch({ type: "HYDRATE", payload })
-      setHydrated(true)
+    switch (result.status) {
+      case "ok":
+        dispatch({ type: "HYDRATE", payload: result.state })
+        setStatus("ready")
+        return
+
+      case "empty":
+        freshInstall.current = true
+        setStatus("ready")
+        return
+
+      default:
+        // The load failed and the payload was left untouched. Never enable
+        // writes after a failed read.
+        setStatus("failed")
     }
   }, [])
 
-  // Mark hydrated after first render (prevents persistence effect from overwriting on mount)
+  // Persist after hydration: once for a loaded payload and on every change
+  // after that. Nothing is written while loading or after a failed load.
   useEffect(() => {
-    if (!hydrated) return
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-    } catch {
-      // Storage quota exceeded or private mode
+    if (status !== "ready") return
+
+    if (freshInstall.current) {
+      freshInstall.current = false
+      return
     }
-  }, [state, hydrated])
+
+    storage.saveState(state)
+    // Save failures are classified by the seam; #25 surfaces them to the user.
+  }, [state, status])
 
   useEffect(() => {
-    if (!hydrated) return
+    if (status !== "ready") return
 
     void scheduleNativeSupplementReminders(state.supplements).then((result) => {
       if (result.status === "error") {
         console.warn("Unable to schedule supplement reminders", result.error)
       }
     })
-  }, [state.supplements, hydrated])
+  }, [state.supplements, status])
 
   return (
     <StateCtx.Provider value={state}>
