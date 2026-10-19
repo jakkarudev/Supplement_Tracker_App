@@ -247,6 +247,145 @@ describe("migrateStoredAppState", () => {
     ])
   })
 
+  it("drops supplements whose id or name is not a non-empty string", () => {
+    const invalidSupplements = [
+      { ...canonicalSupplement, id: "" },
+      { ...canonicalSupplement, id: 42 },
+      { ...canonicalSupplement, id: undefined },
+      { ...canonicalSupplement, name: "" },
+      { ...canonicalSupplement, name: null },
+      { ...canonicalSupplement, name: ["Magnesium"] },
+    ]
+
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [canonicalSupplement, ...invalidSupplements],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped.supplements).toBe(invalidSupplements.length)
+    expect(result.state.supplements).toEqual([canonicalSupplement])
+  })
+
+  it("drops supplements whose form is not one of the four known forms", () => {
+    const invalidSupplements = ["Gummy", "capsule", "", 42, null, undefined].map(
+      (form) => ({ ...canonicalSupplement, id: `bad-form-${String(form)}`, form }),
+    )
+
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [canonicalSupplement, ...invalidSupplements],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped.supplements).toBe(invalidSupplements.length)
+    expect(result.state.supplements).toEqual([canonicalSupplement])
+  })
+
+  it("drops supplements whose startedOn is not a real calendar date", () => {
+    const invalidSupplements = [
+      undefined,
+      null,
+      "",
+      "banana",
+      "2026-02-30",
+      "2026-5-1",
+      20260501,
+    ].map((startedOn) => ({
+      ...canonicalSupplement,
+      id: `bad-start-${String(startedOn)}`,
+      startedOn,
+    }))
+
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [canonicalSupplement, ...invalidSupplements],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped.supplements).toBe(invalidSupplements.length)
+    expect(result.state.supplements).toEqual([canonicalSupplement])
+  })
+
+  it("defaults a missing startedOn only while migrating version 0", () => {
+    const legacy = expectOk(
+      migrateStoredAppState({
+        supplements: [legacySupplement],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+    expect(legacy.dropped.supplements).toBe(0)
+    expect(legacy.state.supplements[0].startedOn).toBe("1970-01-01")
+
+    const canonical = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [{ ...canonicalSupplement, startedOn: undefined }],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+    expect(canonical.dropped.supplements).toBe(1)
+    expect(canonical.state.supplements).toEqual([])
+  })
+
+  it("drops supplements whose days or times are missing or not an array", () => {
+    const invalidSupplements = [
+      { ...canonicalSupplement, days: undefined },
+      { ...canonicalSupplement, days: "1,2,3" },
+      { ...canonicalSupplement, days: null },
+      { ...canonicalSupplement, days: 3 },
+      { ...canonicalSupplement, times: undefined },
+      { ...canonicalSupplement, times: "20:00" },
+      { ...canonicalSupplement, times: null },
+      { ...canonicalSupplement, times: {} },
+    ]
+
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [canonicalSupplement, ...invalidSupplements],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped.supplements).toBe(invalidSupplements.length)
+    expect(result.state.supplements).toEqual([canonicalSupplement])
+  })
+
+  it("keeps explicit empty days and times and stays idempotent", () => {
+    const schedulelessSupplement = { ...canonicalSupplement, days: [], times: [] }
+
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [schedulelessSupplement],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.state.supplements).toEqual([schedulelessSupplement])
+
+    const again = expectOk(
+      migrateStoredAppState({ schemaVersion: 1, ...result.state }),
+    )
+    expect(again.dropped).toEqual(NO_DROPS)
+    expect(again.state).toEqual(result.state)
+  })
+
   it("keeps the last valid wellness entry per date without counting superseded duplicates as drops", () => {
     const result = expectOk(
       migrateStoredAppState({
@@ -326,7 +465,7 @@ describe("migrateStoredAppState", () => {
     const result = expectOk(
       migrateStoredAppState({
         schemaVersion: 1,
-        supplements: [historicalSample],
+        supplements: [{ ...historicalSample, startedOn: "1970-01-01" }],
         doseLogs: [],
         wellnessLogs: [],
       }),

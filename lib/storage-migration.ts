@@ -1,4 +1,10 @@
-import type { DoseLog, DoseStatus, Supplement, WellnessLog } from "./supplements-data"
+import type {
+  DoseLog,
+  DoseStatus,
+  Supplement,
+  SupplementForm,
+  WellnessLog,
+} from "./supplements-data"
 import type { AppState } from "./app-state"
 import { isCalendarDate, normalizeTimeList, normalizeTimeOfDay } from "./day-regimen"
 
@@ -8,6 +14,12 @@ export const CURRENT_SCHEMA_VERSION = 1
 
 const LEGACY_STARTED_ON = "1970-01-01"
 const DOSE_STATUSES: readonly DoseStatus[] = ["taken", "pending", "snoozed"]
+const SUPPLEMENT_FORMS: readonly SupplementForm[] = [
+  "Capsule",
+  "Tablet",
+  "Liquid",
+  "Powder",
+]
 
 export type SchemaVersionDetection =
   | { status: "ok"; version: number }
@@ -64,6 +76,10 @@ function isDoseStatus(value: unknown): value is DoseStatus {
   return DOSE_STATUSES.includes(value as DoseStatus)
 }
 
+function isSupplementForm(value: unknown): value is SupplementForm {
+  return SUPPLEMENT_FORMS.includes(value as SupplementForm)
+}
+
 function positiveOptionalNumber(value: unknown): number | undefined {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : undefined
@@ -72,7 +88,11 @@ function positiveOptionalNumber(value: unknown): number | undefined {
 function normalizeSupplement(value: unknown): Supplement | null {
   if (!isRecord(value)) return null
   const s = value as Partial<Supplement>
-  if (!s.id || !s.name || !s.form) return null
+  if (typeof s.id !== "string" || s.id.length === 0) return null
+  if (typeof s.name !== "string" || s.name.length === 0) return null
+  if (!isSupplementForm(s.form)) return null
+  if (!isCalendarDate(s.startedOn)) return null
+  if (!Array.isArray(s.days) || !Array.isArray(s.times)) return null
 
   return {
     id: s.id,
@@ -83,11 +103,11 @@ function normalizeSupplement(value: unknown): Supplement | null {
     form: s.form,
     notes: s.notes,
     purchaseUrl: s.purchaseUrl,
-    startedOn: s.startedOn ?? LEGACY_STARTED_ON,
+    startedOn: s.startedOn,
     durationDays: positiveOptionalNumber(s.durationDays),
     cycleActiveDays: positiveOptionalNumber(s.cycleActiveDays),
     cycleBreakDays: positiveOptionalNumber(s.cycleBreakDays),
-    days: Array.isArray(s.days) ? s.days : [],
+    days: s.days,
     times: normalizeTimeList(s.times),
     totalCount: Number.isFinite(s.totalCount) ? Number(s.totalCount) : 0,
     currentCount: Number.isFinite(s.currentCount) ? Number(s.currentCount) : 0,

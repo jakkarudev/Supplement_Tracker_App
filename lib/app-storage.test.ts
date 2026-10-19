@@ -269,6 +269,51 @@ describe("createAppStorage", () => {
       })
     })
 
+    it("recovers supplements dropped by strict validation with a backup", () => {
+      const orphanedLog = {
+        id: "log-gummy",
+        supplementId: "gummy",
+        date: "2026-05-01",
+        time: "20:00",
+        status: "taken" as const,
+      }
+      const raw = JSON.stringify({
+        schemaVersion: 1,
+        supplements: [
+          canonicalState.supplements[0],
+          { ...canonicalState.supplements[0], id: "gummy", form: "Gummy" },
+          { ...canonicalState.supplements[0], id: "bad-start", startedOn: "banana" },
+          { ...canonicalState.supplements[0], id: "no-days", days: undefined },
+          { ...canonicalState.supplements[0], id: "no-name", name: 0 },
+        ],
+        doseLogs: [...canonicalState.doseLogs, orphanedLog],
+        wellnessLogs: canonicalState.wellnessLogs,
+      })
+      const adapter = createMemoryAdapter({ initial: raw })
+      const storage = createAppStorage(adapter)
+
+      const load = expectRecovered(storage.loadState())
+      expect(load.state).toEqual({
+        ...canonicalState,
+        doseLogs: [...canonicalState.doseLogs, orphanedLog],
+      })
+      expect(load.dropped).toEqual({
+        supplements: 4,
+        doseLogs: 0,
+        wellnessLogs: 0,
+      })
+      expect(adapter.stored(load.backupKey)).toBe(raw)
+      expect(adapter.setAttempts).toEqual([load.backupKey])
+
+      expect(storage.saveState(load.state)).toEqual({ status: "saved" })
+      expect(JSON.parse(adapter.stored() ?? "")).toEqual({
+        schemaVersion: 1,
+        supplements: [canonicalState.supplements[0]],
+        doseLogs: [...canonicalState.doseLogs, orphanedLog],
+        wellnessLogs: canonicalState.wellnessLogs,
+      })
+    })
+
     it("prunes recovery backups to the three newest", () => {
       const adapter = createMemoryAdapter({ initial: "{ not json" })
       const oldBackups = [
