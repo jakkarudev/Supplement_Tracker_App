@@ -105,20 +105,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Hydrate from localStorage after mount.
   useEffect(() => {
+    let payload: AppState = INITIAL_STATE
+
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
       const parsed = raw ? JSON.parse(raw) : null
-      dispatch({
-        type: "HYDRATE",
-        payload: migrateStoredAppState(parsed),
-      })
+      const migration = migrateStoredAppState(parsed)
+      if (migration.status === "ok") payload = migration.state
     } catch {
       // Corrupted storage — keep default state
-      dispatch({
-        type: "HYDRATE",
-        payload: migrateStoredAppState(null),
-      })
     } finally {
+      dispatch({ type: "HYDRATE", payload })
       setHydrated(true)
     }
   }, [])

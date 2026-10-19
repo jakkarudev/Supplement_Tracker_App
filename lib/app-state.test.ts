@@ -19,7 +19,17 @@ describe("AppState", () => {
   })
 
   it("is the shape storage migration returns", () => {
-    const state: AppState = migrateStoredAppState(null)
+    const result = migrateStoredAppState({
+      schemaVersion: 1,
+      supplements: [],
+      doseLogs: [],
+      wellnessLogs: [],
+    })
+
+    expect(result.status).toBe("ok")
+    if (result.status !== "ok") return
+
+    const state: AppState = result.state
 
     expect(state).toEqual({
       supplements: [],
