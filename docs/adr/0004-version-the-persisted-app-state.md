@@ -6,7 +6,7 @@ The app persists its entire `AppState` under the `regimen-v1` localStorage key. 
 
 Stored payloads are flat and carry `schemaVersion` alongside the state collections. A payload without a numeric `schemaVersion` is version 0, the unversioned legacy shape; the canonical shape is version 1. Loading runs versioned migration steps (`0 → 1` today) and then an always-on normalizer that validates and salvages records. A stored version newer than the current one is never migrated, downgraded, or overwritten: the app reports that the data was written by a newer version and hydrates empty.
 
-Before a load can be followed by a save, the raw stored value is backed up to `regimen-v1.corrupt.<ISO timestamp>` whenever it cannot be parsed, fails the top-level shape check, or produces dropped records during normalization. Only the three newest backups are kept. If the backup write fails, the original value is left untouched and storage is treated as unavailable, so no overwrite can occur.
+Before a load can be followed by a save, the raw stored value is backed up to `regimen-v1.corrupt.<ISO timestamp>` whenever it cannot be parsed, fails the top-level shape check, or produces dropped or repaired records during normalization (ADR 0005). Only the three newest backups are kept. If the backup write fails, the original value is left untouched and storage is treated as unavailable, so no overwrite can occur.
 
 The historical-draft deletion rule is dropped. It could erase user annotations because its equality check ignored `notes` and `purchaseUrl`, and a destructive migration must not be re-runnable. Cross-tab sync is deliberately out of scope.
 
