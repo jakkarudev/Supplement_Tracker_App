@@ -37,6 +37,7 @@ import {
   isSolidForm,
   parseDosageValueForForm,
 } from "@/lib/dosage"
+import { SUPPLEMENT_FORMS } from "@/lib/supplements-data"
 
 const WEEK = [
   { label: "Sun", value: 0 },
@@ -52,7 +53,7 @@ const schema = z.object({
   name: z.string().min(1, "Name is required"),
   brand: z.string().optional(),
   potency: z.string().optional(),
-  form: z.enum(["Capsule", "Tablet", "Liquid", "Powder"]),
+  form: z.enum(SUPPLEMENT_FORMS),
   dosage: z.string().min(1, "Dosage is required"),
   notes: z.string().optional(),
   startedOn: z.string().min(1, "Start date is required"),

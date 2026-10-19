@@ -527,6 +527,109 @@ describe("migrateStoredAppState", () => {
     })
   })
 
+  it("coerces numeric-string durations and cycle fields, counting the rewrite", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          {
+            ...canonicalSupplement,
+            durationDays: "14",
+            cycleActiveDays: "21",
+            cycleBreakDays: "7",
+          },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired.supplements).toBe(1)
+    expect(result.state.supplements[0]).toMatchObject({
+      durationDays: 14,
+      cycleActiveDays: 21,
+      cycleBreakDays: 7,
+    })
+  })
+
+  it("removes and counts non-positive, null, and non-numeric durations and cycle fields", () => {
+    for (const stored of [0, -5, null, "banana"]) {
+      const result = expectOk(
+        migrateStoredAppState({
+          schemaVersion: 1,
+          supplements: [
+            {
+              ...canonicalSupplement,
+              durationDays: stored,
+              cycleActiveDays: stored,
+              cycleBreakDays: stored,
+            },
+          ],
+          doseLogs: [],
+          wellnessLogs: [],
+        }),
+      )
+
+      expect(result.repaired.supplements).toBe(1)
+      expect(result.state.supplements[0].durationDays).toBeUndefined()
+      expect(result.state.supplements[0].cycleActiveDays).toBeUndefined()
+      expect(result.state.supplements[0].cycleBreakDays).toBeUndefined()
+    }
+  })
+
+  it("keeps valid numeric durations and cycle fields without counting a repair", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [
+          {
+            ...canonicalSupplement,
+            durationDays: 30,
+            cycleActiveDays: 21,
+            cycleBreakDays: 7,
+          },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired).toEqual(NO_REPAIRS)
+    expect(result.state.supplements[0]).toMatchObject({
+      durationDays: 30,
+      cycleActiveDays: 21,
+      cycleBreakDays: 7,
+    })
+  })
+
+  it("fills absent durations and cycle fields silently", () => {
+    const minimalSupplement = {
+      id: "minimal",
+      name: "Minimal",
+      form: "Tablet",
+      startedOn: "2026-05-01",
+      days: [],
+      times: [],
+    }
+
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 1,
+        supplements: [minimalSupplement],
+        doseLogs: [],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.repaired).toEqual(NO_REPAIRS)
+    expect(result.state.supplements[0]).toMatchObject({
+      durationDays: undefined,
+      cycleActiveDays: undefined,
+      cycleBreakDays: undefined,
+    })
+  })
+
   it("falls back to today's defaults for non-numeric counts and thresholds", () => {
     const result = expectOk(
       migrateStoredAppState({

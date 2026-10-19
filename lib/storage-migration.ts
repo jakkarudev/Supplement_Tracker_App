@@ -1,9 +1,10 @@
-import type {
-  DoseLog,
-  DoseStatus,
-  Supplement,
-  SupplementForm,
-  WellnessLog,
+import {
+  SUPPLEMENT_FORMS,
+  type DoseLog,
+  type DoseStatus,
+  type Supplement,
+  type SupplementForm,
+  type WellnessLog,
 } from "./supplements-data"
 import type { AppState } from "./app-state"
 import { isCalendarDate, normalizeTimeList, normalizeTimeOfDay } from "./day-regimen"
@@ -14,12 +15,6 @@ export const CURRENT_SCHEMA_VERSION = 1
 
 const LEGACY_STARTED_ON = "1970-01-01"
 const DOSE_STATUSES: readonly DoseStatus[] = ["taken", "pending", "snoozed"]
-const SUPPLEMENT_FORMS: readonly SupplementForm[] = [
-  "Capsule",
-  "Tablet",
-  "Liquid",
-  "Powder",
-]
 
 export type SchemaVersionDetection =
   | { status: "ok"; version: number }
@@ -47,36 +42,42 @@ export function detectSchemaVersion(raw: unknown): SchemaVersionDetection {
   return { status: "ok", version: 0 }
 }
 
-export type DroppedRecordCounts = {
+/** One record count per stored collection. */
+export type CollectionRecordCounts = {
   supplements: number
   doseLogs: number
   wellnessLogs: number
+}
+
+/** How many records of each collection validation dropped. */
+export type DroppedRecordCounts = CollectionRecordCounts
+
+/** How many records of each collection validation repaired. */
+export type RepairedRecordCounts = CollectionRecordCounts
+
+/** The total number of records counted across every collection. */
+function totalRecords(counts: CollectionRecordCounts): number {
+  return counts.supplements + counts.doseLogs + counts.wellnessLogs
 }
 
 /** The total number of records dropped across every collection. */
 export function totalDroppedRecords(dropped: DroppedRecordCounts): number {
-  return dropped.supplements + dropped.doseLogs + dropped.wellnessLogs
+  return totalRecords(dropped)
 }
 
 /** True when normalization dropped at least one record. */
 export function hasDroppedRecords(dropped: DroppedRecordCounts): boolean {
-  return totalDroppedRecords(dropped) > 0
-}
-
-export type RepairedRecordCounts = {
-  supplements: number
-  doseLogs: number
-  wellnessLogs: number
+  return totalRecords(dropped) > 0
 }
 
 /** The total number of records repaired across every collection. */
 export function totalRepairedRecords(repaired: RepairedRecordCounts): number {
-  return repaired.supplements + repaired.doseLogs + repaired.wellnessLogs
+  return totalRecords(repaired)
 }
 
 /** True when normalization repaired at least one record. */
 export function hasRepairedRecords(repaired: RepairedRecordCounts): boolean {
-  return totalRepairedRecords(repaired) > 0
+  return totalRecords(repaired) > 0
 }
 
 export type StoredAppStateMigration =
@@ -119,6 +120,35 @@ function listRewritten<T>(
   )
 }
 
+/**
+ * True when normalization removed, replaced, or rewrote a value that was
+ * present in storage. Absent values never count: filling them with a default
+ * is not a repair.
+ */
+function valueRewritten(normalized: unknown, stored: unknown): boolean {
+  if (stored === undefined) return false
+  if (Array.isArray(normalized) && Array.isArray(stored)) {
+    return listRewritten(normalized, stored)
+  }
+  return !Object.is(normalized, stored)
+}
+
+/**
+ * True when any field the normalized record carries differs from its stored
+ * value. Unknown stored keys are ignored: validation only judges the fields
+ * the canonical record has, and the comparison cannot miss a field a
+ * normalizer forgot to flag.
+ */
+function recordRewritten<T extends object>(
+  normalized: T,
+  stored: Record<string, unknown>,
+): boolean {
+  const normalizedValues = normalized as Record<string, unknown>
+  return Object.keys(normalizedValues).some((key) =>
+    valueRewritten(normalizedValues[key], stored[key]),
+  )
+}
+
 /** Keeps only integers 0–6, in stored order, without duplicates. */
 function normalizeDays(value: readonly unknown[]): number[] {
   const days: number[] = []
@@ -131,50 +161,35 @@ function normalizeDays(value: readonly unknown[]): number[] {
   return days
 }
 
-/**
- * Text fields keep stored strings; an absent value is filled with its default
- * without counting a repair, and any other stored value is replaced by it.
- */
+/** Text fields keep stored strings; any other value becomes its default. */
 function normalizeStoredText(
   value: unknown,
   fallback: string | undefined,
-): { value: string | undefined; repaired: boolean } {
-  if (typeof value === "string") return { value, repaired: false }
-  if (value === undefined) return { value: fallback, repaired: false }
-  return { value: fallback, repaired: true }
+): string | undefined {
+  return typeof value === "string" ? value : fallback
 }
 
 /**
  * Counts and thresholds keep finite stored numbers (negatives included: an
  * overdrawn inventory is real), coerce numeric strings, and fall back to their
- * defaults otherwise. Only values that were absent fill silently.
+ * defaults otherwise.
  */
-function normalizeStoredNumber(
-  value: unknown,
-  fallback: number,
-): { value: number; repaired: boolean } {
+function normalizeStoredNumber(value: unknown, fallback: number): number {
   if (typeof value === "number") {
-    return Number.isFinite(value)
-      ? { value, repaired: false }
-      : { value: fallback, repaired: true }
+    return Number.isFinite(value) ? value : fallback
   }
 
   if (typeof value === "string" && value.trim() !== "") {
     const parsed = Number(value)
-    if (Number.isFinite(parsed)) return { value: parsed, repaired: true }
+    if (Number.isFinite(parsed)) return parsed
   }
 
-  return { value: fallback, repaired: value !== undefined }
+  return fallback
 }
 
-/** Booleans keep their stored value; absent and invalid ones become `true`. */
-function normalizeStoredBoolean(
-  value: unknown,
-  fallback: boolean,
-): { value: boolean; repaired: boolean } {
-  if (typeof value === "boolean") return { value, repaired: false }
-  if (value === undefined) return { value: fallback, repaired: false }
-  return { value: fallback, repaired: true }
+/** Booleans keep their stored value; anything else becomes the default. */
+function normalizeStoredBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback
 }
 
 function normalizeSupplement(value: unknown): NormalizedRecord<Supplement> | null {
@@ -186,54 +201,28 @@ function normalizeSupplement(value: unknown): NormalizedRecord<Supplement> | nul
   if (!isCalendarDate(s.startedOn)) return null
   if (!Array.isArray(s.days) || !Array.isArray(s.times)) return null
 
-  const days = normalizeDays(s.days)
-  const times = normalizeTimeList(s.times)
-  const brand = normalizeStoredText(s.brand, "")
-  const potency = normalizeStoredText(s.potency, "")
-  const dosage = normalizeStoredText(s.dosage, "")
-  const notes = normalizeStoredText(s.notes, undefined)
-  const purchaseUrl = normalizeStoredText(s.purchaseUrl, undefined)
-  const totalCount = normalizeStoredNumber(s.totalCount, 0)
-  const currentCount = normalizeStoredNumber(s.currentCount, 0)
-  const restockReminder = normalizeStoredBoolean(s.restockReminder, true)
-  const restockThreshold = normalizeStoredNumber(s.restockThreshold, 10)
-
-  const repaired =
-    listRewritten(days, s.days) ||
-    listRewritten(times, s.times) ||
-    brand.repaired ||
-    potency.repaired ||
-    dosage.repaired ||
-    notes.repaired ||
-    purchaseUrl.repaired ||
-    totalCount.repaired ||
-    currentCount.repaired ||
-    restockReminder.repaired ||
-    restockThreshold.repaired
-
-  return {
-    record: {
-      id: s.id,
-      name: s.name,
-      brand: brand.value ?? "",
-      potency: potency.value ?? "",
-      dosage: dosage.value ?? "",
-      form: s.form,
-      notes: notes.value,
-      purchaseUrl: purchaseUrl.value,
-      startedOn: s.startedOn,
-      durationDays: positiveOptionalNumber(s.durationDays),
-      cycleActiveDays: positiveOptionalNumber(s.cycleActiveDays),
-      cycleBreakDays: positiveOptionalNumber(s.cycleBreakDays),
-      days,
-      times,
-      totalCount: totalCount.value,
-      currentCount: currentCount.value,
-      restockReminder: restockReminder.value,
-      restockThreshold: restockThreshold.value,
-    },
-    repaired,
+  const record: Supplement = {
+    id: s.id,
+    name: s.name,
+    brand: normalizeStoredText(s.brand, "") ?? "",
+    potency: normalizeStoredText(s.potency, "") ?? "",
+    dosage: normalizeStoredText(s.dosage, "") ?? "",
+    form: s.form,
+    notes: normalizeStoredText(s.notes, undefined),
+    purchaseUrl: normalizeStoredText(s.purchaseUrl, undefined),
+    startedOn: s.startedOn,
+    durationDays: positiveOptionalNumber(s.durationDays),
+    cycleActiveDays: positiveOptionalNumber(s.cycleActiveDays),
+    cycleBreakDays: positiveOptionalNumber(s.cycleBreakDays),
+    days: normalizeDays(s.days),
+    times: normalizeTimeList(s.times),
+    totalCount: normalizeStoredNumber(s.totalCount, 0),
+    currentCount: normalizeStoredNumber(s.currentCount, 0),
+    restockReminder: normalizeStoredBoolean(s.restockReminder, true),
+    restockThreshold: normalizeStoredNumber(s.restockThreshold, 10),
   }
+
+  return { record, repaired: recordRewritten(record, value) }
 }
 
 function normalizeDoseLog(value: unknown): NormalizedRecord<DoseLog> | null {
@@ -248,22 +237,23 @@ function normalizeDoseLog(value: unknown): NormalizedRecord<DoseLog> | null {
   const normalizedTime = normalizeTimeOfDay(time)
   if (!normalizedTime) return null
 
-  let repaired = normalizedTime !== time
-
-  const log: DoseLog = { id, supplementId, date, time: normalizedTime, status }
+  const record: DoseLog = { id, supplementId, date, time: normalizedTime, status }
   if (
     status === "taken" &&
     typeof inventoryAmount === "number" &&
     Number.isFinite(inventoryAmount) &&
     inventoryAmount > 0
   ) {
-    log.inventoryAmount = inventoryAmount
-  } else if (inventoryAmount !== undefined) {
-    // Present but not carried by the normalized log: stripped, so a repair.
-    repaired = true
+    record.inventoryAmount = inventoryAmount
   }
 
-  return { record: log, repaired }
+  // A stripped `inventoryAmount` is deliberately absent from the normalized
+  // record, so the field comparison cannot see it; compare it explicitly.
+  const repaired =
+    recordRewritten(record, value) ||
+    valueRewritten(record.inventoryAmount, inventoryAmount)
+
+  return { record, repaired }
 }
 
 function isWellnessScore(value: unknown): value is number {
