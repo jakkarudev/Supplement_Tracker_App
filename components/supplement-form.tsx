@@ -240,11 +240,11 @@ export function SupplementForm({ editingId, onDone }: Props) {
   }
 
   function onSubmit(values: FormValues) {
-    // Another tab can delete this supplement while the form is open. Saving
-    // the old record would resurrect an intentional deletion, so report it
-    // instead.
+    // The supplement can disappear while this form is open: deleted in
+    // another tab, or an adoption replaced the store. Saving the old record
+    // would resurrect an intentional deletion, so report it instead.
     if (editingId && !editing) {
-      toast.error("This supplement was deleted in another tab", {
+      toast.error("This supplement no longer exists", {
         description: "Your changes were not saved.",
       })
       onDone?.()

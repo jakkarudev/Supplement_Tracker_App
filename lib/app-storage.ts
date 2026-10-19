@@ -174,12 +174,13 @@ function hasInvalidCollectionShape(value: unknown): boolean {
  * see canonical state and discriminated results. Loading never throws.
  */
 export function createAppStorage(adapter: StorageAdapter): AppStorage {
-  // A load that cannot use the stored payload disables writes until a load
+  // A load that cannot use the stored payload blocks writes until a load
   // succeeds again, so the payload that failed to load is never written over.
   // A recovery that backs the raw payload up successfully re-enables writes so
-  // the salvaged state is saved back; an incompatible newer-version payload
-  // and unavailable storage keep them off.
-  let writesDisabled = false
+  // the salvaged state is saved back. The block reason matters to `refresh`:
+  // a storage failure is retryable without the payload changing, while a
+  // payload from a newer build cannot become writable until the raw changes.
+  let writesBlockedBy: "storage" | "payload" | null = null
 
   // The raw payload last read or written. `undefined` means neither has
   // happened yet. A visibility re-read compares against it so an unchanged
@@ -202,7 +203,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
     lastSeenRaw = raw
 
     if (raw === null || raw === "") {
-      writesDisabled = false
+      writesBlockedBy = null
       return { status: "empty" }
     }
 
@@ -218,7 +219,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
     ): LoadStateResult => {
       try {
         const backupKey = backupPayload(adapter, storedPayload)
-        writesDisabled = false
+        writesBlockedBy = null
         return {
           status: "recovered",
           state,
@@ -227,7 +228,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
           repaired: counts.repaired,
         }
       } catch (error) {
-        writesDisabled = true
+        writesBlockedBy = "storage"
         return { status: "unavailable", error }
       }
     }
@@ -244,8 +245,8 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
       }
       if (detection.version > CURRENT_SCHEMA_VERSION) {
         // Newer data is never migrated, downgraded, or backed up; writes are
-        // disabled so this load cannot overwrite the only copy.
-        writesDisabled = true
+        // blocked so this load cannot overwrite the only copy.
+        writesBlockedBy = "payload"
         return { status: "incompatible", version: detection.version }
       }
 
@@ -267,7 +268,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
         })
       }
 
-      writesDisabled = false
+      writesBlockedBy = null
       return {
         status: "ok",
         state: migration.state,
@@ -281,35 +282,42 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
     }
   }
 
-  function loadState(): LoadStateResult {
-    let raw: string | null
+  function readRaw():
+    | { ok: true; raw: string | null }
+    | { ok: false; error: unknown } {
     try {
-      raw = adapter.getItem(STORAGE_KEY)
+      return { ok: true, raw: adapter.getItem(STORAGE_KEY) }
     } catch (error) {
+      return { ok: false, error }
+    }
+  }
+
+  function loadState(): LoadStateResult {
+    const read = readRaw()
+    if (!read.ok) {
       // Storage itself is unreachable (blocked, denied, or missing). The
       // app keeps working in memory, but no write may follow this load.
-      writesDisabled = true
-      return { status: "unavailable", error }
+      writesBlockedBy = "storage"
+      return { status: "unavailable", error: read.error }
     }
 
-    return loadFromRaw(raw)
+    return loadFromRaw(read.raw)
   }
 
   /**
-   * Re-reads the raw payload after the tab becomes visible. A read failure is
-   * left to the save path or the next storage event to report; missing a
+   * Re-reads the raw payload after the tab becomes visible. An unchanged
+   * store normally has nothing to adopt, except when a storage failure
+   * blocked writes: retrying the load is what re-enables them. A newer-build
+   * payload cannot become writable without the raw changing. A read failure
+   * is left to the save path or the next storage event to report; missing a
    * re-read is not itself a reason to toast.
    */
   function refresh(): void {
-    let raw: string | null
-    try {
-      raw = adapter.getItem(STORAGE_KEY)
-    } catch {
-      return
-    }
+    const read = readRaw()
+    if (!read.ok) return
 
-    if (raw === lastSeenRaw) return
-    notify(loadFromRaw(raw))
+    if (read.raw === lastSeenRaw && writesBlockedBy !== "storage") return
+    notify(loadFromRaw(read.raw))
   }
 
   function subscribe(
@@ -336,7 +344,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
     loadState,
 
     saveState(state) {
-      if (writesDisabled) {
+      if (writesBlockedBy !== null) {
         return {
           status: "failed",
           reason: "unavailable",

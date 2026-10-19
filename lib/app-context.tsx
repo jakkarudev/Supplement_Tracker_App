@@ -198,7 +198,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // The state object last adopted from another tab. Reference identity lets
   // the persist effect render an adoption without writing it back, while the
   // next local action (a new object) still saves.
-  const externallyHydratedState = useRef<AppState | null>(null)
+  const adoptedState = useRef<AppState | null>(null)
 
   /**
    * Routes a load result to state and toasts. A cold start and an external
@@ -214,12 +214,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         freshInstall.current = false
       }
 
+      /** Renders an adopted state and records it for the write skip. */
+      function adopt(nextState: AppState) {
+        adoptedState.current = nextState
+        dispatch({ type: "HYDRATE", payload: nextState })
+      }
+
       switch (result.status) {
         case "ok":
-          if (origin === "external") {
-            externallyHydratedState.current = result.state
-          }
-          dispatch({ type: "HYDRATE", payload: result.state })
+          if (origin === "external") adopt(result.state)
+          else dispatch({ type: "HYDRATE", payload: result.state })
           setStatus("ready")
           return
 
@@ -228,10 +232,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             dropped: result.dropped,
             repaired: result.repaired,
           })
-          if (origin === "external") {
-            externallyHydratedState.current = result.state
-          }
-          dispatch({ type: "HYDRATE", payload: result.state })
+          if (origin === "external") adopt(result.state)
+          else dispatch({ type: "HYDRATE", payload: result.state })
           setStatus("recovered")
           return
 
@@ -239,8 +241,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (origin === "initial") {
             freshInstall.current = true
           } else {
-            externallyHydratedState.current = INITIAL_STATE
-            dispatch({ type: "HYDRATE", payload: INITIAL_STATE })
+            // A fresh object, so the write skip cannot depend on React
+            // bailing out of an update that is already the same reference.
+            adopt({ ...INITIAL_STATE })
           }
           setStatus("ready")
           return
@@ -253,8 +256,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               "This version can't read it, so nothing is shown. Update the app to see your data.",
           })
           if (origin === "external") {
-            externallyHydratedState.current = INITIAL_STATE
-            dispatch({ type: "HYDRATE", payload: INITIAL_STATE })
+            adopt({ ...INITIAL_STATE })
           }
           setStatus("incompatible")
           return
@@ -311,8 +313,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // An adoption from another tab renders but never writes back. The ref
     // still matches only within this render, so a local action that follows
     // saves normally.
-    if (externallyHydratedState.current === state) {
-      externallyHydratedState.current = null
+    if (adoptedState.current === state) {
+      adoptedState.current = null
       if (status === "ready" || status === "recovered") return
     }
 

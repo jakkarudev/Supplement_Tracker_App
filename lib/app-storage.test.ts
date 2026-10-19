@@ -1,9 +1,10 @@
-import { describe, expect, expectTypeOf, it } from "vitest"
+import { describe, expect, expectTypeOf, it, vi } from "vitest"
 import type { AppState } from "./app-state"
 import {
   BACKUP_KEY_PREFIX,
   STORAGE_KEY,
   createAppStorage,
+  localStorageAdapter,
   type LoadStateResult,
   type StorageAdapter,
 } from "./app-storage"
@@ -728,6 +729,52 @@ describe("createAppStorage", () => {
       expect(() => storage.refresh()).not.toThrow()
       expect(results).toEqual([])
     })
+
+    it("retries a storage-blocked load and re-enables writes", () => {
+      const options: { getError?: unknown } = {}
+      const adapter = createMemoryAdapter(options)
+      adapter.store(JSON.stringify({ schemaVersion: 1, ...canonicalState }))
+      const storage = createAppStorage(adapter)
+
+      expect(storage.loadState()).toEqual({
+        status: "ok",
+        state: canonicalState,
+        migratedFrom: null,
+      })
+
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+
+      const error = new Error("temporarily blocked")
+      options.getError = error
+      expect(storage.loadState()).toEqual({ status: "unavailable", error })
+      expect(storage.saveState(canonicalState).status).toBe("failed")
+
+      // The raw payload never changed, but a successful retry has to lift the
+      // write block rather than leave the session read-only until a reload.
+      options.getError = undefined
+      storage.refresh()
+
+      expect(results).toEqual([
+        { status: "ok", state: canonicalState, migratedFrom: null },
+      ])
+      expect(storage.saveState(canonicalState)).toEqual({ status: "saved" })
+    })
+
+    it("does not retry an unchanged payload from a newer build", () => {
+      const raw = JSON.stringify({ schemaVersion: 2, ...canonicalState })
+      const adapter = createMemoryAdapter({ initial: raw })
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+
+      expect(storage.loadState()).toEqual({ status: "incompatible", version: 2 })
+
+      storage.refresh()
+
+      expect(results).toEqual([])
+      expect(storage.saveState(canonicalState).status).toBe("failed")
+    })
   })
 
   describe("saveState", () => {
@@ -768,6 +815,51 @@ describe("createAppStorage", () => {
         })
       }
     })
+  })
+})
+
+describe("localStorageAdapter", () => {
+  it("forwards only changes to the live key", () => {
+    type StorageListener = (event: StorageEvent) => void
+    const listeners = new Set<StorageListener>()
+    const fakeLocalStorage = {}
+    vi.stubGlobal("window", {
+      localStorage: fakeLocalStorage,
+      addEventListener: (type: string, listener: StorageListener) => {
+        if (type === "storage") listeners.add(listener)
+      },
+      removeEventListener: (type: string, listener: StorageListener) => {
+        if (type === "storage") listeners.delete(listener)
+      },
+    })
+
+    try {
+      let calls = 0
+      const subscribe = localStorageAdapter.subscribe
+      if (!subscribe) throw new Error("expected a localStorage subscription")
+      const unsubscribe = subscribe(() => {
+        calls += 1
+      })
+
+      const emit = (key: string | null, storageArea: unknown) => {
+        for (const listener of listeners) {
+          listener({ key, storageArea } as StorageEvent)
+        }
+      }
+
+      emit(STORAGE_KEY, fakeLocalStorage)
+      emit(`${BACKUP_KEY_PREFIX}2026-10-19T00:00:00.000Z`, fakeLocalStorage)
+      emit("unrelated", fakeLocalStorage)
+      emit(STORAGE_KEY, {})
+      emit(null, fakeLocalStorage)
+
+      expect(calls).toBe(2)
+
+      unsubscribe()
+      expect(listeners.size).toBe(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 
