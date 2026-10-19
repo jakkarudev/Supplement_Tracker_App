@@ -5,14 +5,16 @@ import {
   useContext,
   useReducer,
   useEffect,
+  useRef,
   useState,
   useMemo,
 } from "react"
+import { toast } from "sonner"
 import {
   type Supplement,
-  type DoseLog,
   type WellnessLog,
 } from "@/lib/supplements-data"
+import type { AppState } from "@/lib/app-state"
 import { nanoid } from "@/lib/nanoid"
 import { scheduleNativeSupplementReminders } from "@/lib/reminders"
 import {
@@ -22,7 +24,15 @@ import {
   updateSupplement,
   type LogDoseInput,
 } from "@/lib/regimen-actions"
-import { migrateStoredAppState } from "@/lib/storage-migration"
+import {
+  createAppStorage,
+  localStorageAdapter,
+  type SaveFailureReason,
+} from "@/lib/app-storage"
+import {
+  totalDroppedRecords,
+  type DroppedRecordCounts,
+} from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
@@ -33,11 +43,8 @@ import {
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-export type AppState = {
-  supplements: Supplement[]
-  doseLogs: DoseLog[]
-  wellnessLogs: WellnessLog[]
-}
+// Re-exported so existing imports from the provider keep working.
+export type { AppState }
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
@@ -95,56 +102,160 @@ const INITIAL_STATE: AppState = {
   wellnessLogs: [],
 }
 
-const STORAGE_KEY = "regimen-v1"
+// The seam instance the provider hydrates and persists through.
+const storage = createAppStorage(localStorageAdapter)
+
+/**
+ * The provider's hydration status. `recovered` means the payload lost data or
+ * failed the top-level shape check, was backed up, and the salvaged state
+ * should be written back in the current format. `incompatible` means the
+ * stored payload was written by a newer build: the provider hydrates empty,
+ * toasts why, and never writes, so the payload is left untouched.
+ * `unavailable` means storage could not be reached at load time: the provider
+ * serves the empty state, warns that changes will not be saved, and never
+ * writes.
+ */
+type HydrationStatus =
+  | "loading"
+  | "ready"
+  | "recovered"
+  | "incompatible"
+  | "unavailable"
+
+/** The description shown when a save fails, keyed by its classified reason. */
+const SAVE_FAILURE_DESCRIPTIONS: Record<SaveFailureReason, string> = {
+  quota: "Storage is full. Your latest changes are not saved.",
+  unavailable: "Storage is unavailable. Changes are not being saved.",
+  unknown: "Storage is failing. Your latest changes are not saved.",
+}
 
 const StateCtx = createContext<AppState>(INITIAL_STATE)
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
 
+/** Compile-time exhaustiveness guard for discriminated unions. */
+function assertNever(value: never): never {
+  throw new Error(`Unexpected load status: ${String(value)}`)
+}
+
+/**
+ * Toasts the backup location and how much was lost. The per-collection
+ * details go to the console so the one-line summary stays readable.
+ */
+function announceRecovery(backupKey: string, dropped: DroppedRecordCounts) {
+  const total = totalDroppedRecords(dropped)
+  console.warn("Recovered stored data", { backupKey, dropped })
+
+  toast.warning(
+    total === 0
+      ? `Recovered your data from a damaged store; no records were dropped. Backup saved as ${backupKey}.`
+      : `Recovered your data; ${total} record${total === 1 ? "" : "s"} were dropped. Backup saved as ${backupKey}.`,
+  )
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   // Always render the same initial state on server and first client pass.
-  // Hydrate from localStorage in an effect to prevent SSR/client mismatches.
+  // Hydrate through the storage seam in an effect to prevent SSR/client
+  // mismatches.
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE)
-  const [hydrated, setHydrated] = useState(false)
+  const [status, setStatus] = useState<HydrationStatus>("loading")
 
-  // Hydrate from localStorage after mount.
+  // Set when hydration found nothing stored. The first persistence pass after
+  // hydration consumes it so a fresh install writes nothing until the user
+  // actually changes something.
+  const freshInstall = useRef(false)
+
+  // True while saves keep failing; a failed save logs every time but toasts
+  // only when this flips, so one failure streak warns once. A successful save
+  // resets it so the next streak warns again.
+  const saveFailureActive = useRef(false)
+
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      const parsed = raw ? JSON.parse(raw) : null
-      dispatch({
-        type: "HYDRATE",
-        payload: migrateStoredAppState(parsed),
-      })
-    } catch {
-      // Corrupted storage — keep default state
-      dispatch({
-        type: "HYDRATE",
-        payload: migrateStoredAppState(null),
-      })
-    } finally {
-      setHydrated(true)
+    const result = storage.loadState()
+
+    switch (result.status) {
+      case "ok":
+        dispatch({ type: "HYDRATE", payload: result.state })
+        setStatus("ready")
+        return
+
+      case "recovered":
+        announceRecovery(result.backupKey, result.dropped)
+        dispatch({ type: "HYDRATE", payload: result.state })
+        setStatus("recovered")
+        return
+
+      case "empty":
+        freshInstall.current = true
+        setStatus("ready")
+        return
+
+      case "incompatible":
+        // A newer build wrote this payload. Hydrate empty without writing so
+        // the stored data survives until the user updates.
+        toast.error("Your data was written by a newer version", {
+          description:
+            "This version can't read it, so nothing is shown. Update the app to see your data.",
+        })
+        setStatus("incompatible")
+        return
+
+      case "unavailable":
+        // Storage could not be reached. Serve the empty state (already the
+        // initial state), warn that nothing will be saved, and keep writes
+        // off so the session stays usable in memory only.
+        toast.error("Storage is unavailable", {
+          description: "Changes will not be saved during this session.",
+        })
+        setStatus("unavailable")
+        return
     }
+
+    // Unreachable: every load result variant returns above. A new variant
+    // makes this fail to compile rather than silently hydrating nothing.
+    assertNever(result)
   }, [])
 
-  // Mark hydrated after first render (prevents persistence effect from overwriting on mount)
+  // Persist after hydration: once for a loaded payload and on every change
+  // after that. A recovered load also writes once here, which saves the
+  // salvaged state back in the current format so recovery cannot repeat.
+  // Nothing is written while loading, while storage is unavailable, or when
+  // the stored data is incompatible with this build.
   useEffect(() => {
-    if (!hydrated) return
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-    } catch {
-      // Storage quota exceeded or private mode
-    }
-  }, [state, hydrated])
+    if (status !== "ready" && status !== "recovered") return
 
+    if (freshInstall.current) {
+      freshInstall.current = false
+      return
+    }
+
+    const result = storage.saveState(state)
+
+    if (result.status === "saved") {
+      saveFailureActive.current = false
+      return
+    }
+
+    console.error(`Failed to save app state (${result.reason})`, result.error)
+    if (!saveFailureActive.current) {
+      saveFailureActive.current = true
+      toast.error("Changes could not be saved", {
+        description: SAVE_FAILURE_DESCRIPTIONS[result.reason],
+      })
+    }
+  }, [state, status])
+
+  // Recovered loads carry salvageable supplements too, so they schedule
+  // reminders like any loaded state. Incompatible and unavailable loads
+  // hydrate empty and never schedule.
   useEffect(() => {
-    if (!hydrated) return
+    if (status !== "ready" && status !== "recovered") return
 
     void scheduleNativeSupplementReminders(state.supplements).then((result) => {
       if (result.status === "error") {
         console.warn("Unable to schedule supplement reminders", result.error)
       }
     })
-  }, [state.supplements, hydrated])
+  }, [state.supplements, status])
 
   return (
     <StateCtx.Provider value={state}>

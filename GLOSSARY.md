@@ -48,6 +48,10 @@ _Avoid_: daily routine, day's intakes
 A named part of the day used to group scheduled doses: Morning, Afternoon, Evening, or Night.
 _Avoid_: time slot
 
+**Wellness Log**:
+A daily self-rating of energy and focus on a valid calendar date, with finite scores from 1 to 10. One entry per date; the last valid entry wins.
+_Avoid_: check-in, mood log, rating
+
 ### Inventory
 
 **Inventory**:
