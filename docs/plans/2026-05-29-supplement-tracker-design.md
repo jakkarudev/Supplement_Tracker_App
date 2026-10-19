@@ -2,6 +2,8 @@
 **Date:** 2026-05-29  
 **Stack:** Next.js 16 · TypeScript · TailwindCSS v4 · React Context
 
+> **Historical**: the persistence key and schema described below are superseded by [ADR 0004](../adr/0004-version-the-persisted-app-state.md).
+
 ---
 
 ## Summary
