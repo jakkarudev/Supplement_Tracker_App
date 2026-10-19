@@ -85,7 +85,7 @@ function InventoryRow({
   const isMobile = useIsMobile()
   const pct =
     supplement.totalCount > 0
-      ? Math.round((supplement.currentCount / supplement.totalCount) * 100)
+      ? Math.max(0, Math.round((supplement.currentCount / supplement.totalCount) * 100))
       : 0
   const isLow = supplement.restockReminder && supplement.currentCount <= supplement.restockThreshold
 

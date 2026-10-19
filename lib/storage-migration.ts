@@ -145,7 +145,7 @@ function normalizeSupplement(value: unknown): Supplement | null {
 function normalizeDoseLog(value: unknown): DoseLog | null {
   if (!isRecord(value)) return null
 
-  const { id, supplementId, date, time, status } = value
+  const { id, supplementId, date, time, status, inventoryAmount } = value
   if (typeof id !== "string" || id.length === 0) return null
   if (typeof supplementId !== "string" || supplementId.length === 0) return null
   if (!isCalendarDate(date)) return null
@@ -154,7 +154,17 @@ function normalizeDoseLog(value: unknown): DoseLog | null {
   const normalizedTime = normalizeTimeOfDay(time)
   if (!normalizedTime) return null
 
-  return { id, supplementId, date, time: normalizedTime, status }
+  const log: DoseLog = { id, supplementId, date, time: normalizedTime, status }
+  if (
+    status === "taken" &&
+    typeof inventoryAmount === "number" &&
+    Number.isFinite(inventoryAmount) &&
+    inventoryAmount > 0
+  ) {
+    log.inventoryAmount = inventoryAmount
+  }
+
+  return log
 }
 
 function isUnreferencedHistoricalDraft(value: unknown, rawLogs: unknown[]): boolean {

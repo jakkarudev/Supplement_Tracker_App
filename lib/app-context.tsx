@@ -15,13 +15,18 @@ import {
 } from "@/lib/supplements-data"
 import { nanoid } from "@/lib/nanoid"
 import { scheduleNativeSupplementReminders } from "@/lib/reminders"
-import { dosageInventoryAmount } from "@/lib/dosage"
+import {
+  addSupplement,
+  deleteSupplement,
+  logDose,
+  updateSupplement,
+  type LogDoseInput,
+} from "@/lib/regimen-actions"
 import { migrateStoredAppState } from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
   dayRegimen,
-  doseKey,
   formatCalendarDate,
   today,
 } from "@/lib/day-regimen"
@@ -41,70 +46,28 @@ export type Action =
   | { type: "ADD_SUPPLEMENT"; payload: Supplement }
   | { type: "UPDATE_SUPPLEMENT"; payload: Supplement }
   | { type: "DELETE_SUPPLEMENT"; payload: string }
-  | { type: "LOG_DOSE"; payload: DoseLog }
+  | { type: "LOG_DOSE"; payload: LogDoseInput }
   | { type: "LOG_WELLNESS"; payload: WellnessLog }
 
 // ─── Reducer ──────────────────────────────────────────────────────────────────
 
+/** Thin adapter over the regimen write model plus wellness logs. */
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "HYDRATE":
       return action.payload
 
     case "ADD_SUPPLEMENT":
-      return { ...state, supplements: [...state.supplements, action.payload] }
+      return { ...state, ...addSupplement(state, action.payload) }
 
     case "UPDATE_SUPPLEMENT":
-      return {
-        ...state,
-        supplements: state.supplements.map((s) =>
-          s.id === action.payload.id ? action.payload : s,
-        ),
-      }
+      return { ...state, ...updateSupplement(state, action.payload) }
 
     case "DELETE_SUPPLEMENT":
-      return {
-        ...state,
-        supplements: state.supplements.filter((s) => s.id !== action.payload),
-        doseLogs: state.doseLogs.filter(
-          (l) => l.supplementId !== action.payload,
-        ),
-      }
+      return { ...state, ...deleteSupplement(state, action.payload) }
 
-    case "LOG_DOSE": {
-      const incomingKey = doseKey(
-        action.payload.supplementId,
-        action.payload.date,
-        action.payload.time,
-      )
-      const existingIdx = state.doseLogs.findIndex(
-        (l) => doseKey(l.supplementId, l.date, l.time) === incomingKey,
-      )
-      const existingLog = state.doseLogs[existingIdx]
-
-      // Guard: never double-decrement inventory
-      const alreadyTaken = existingLog?.status === "taken"
-      const beingTaken = action.payload.status === "taken"
-
-      const newLogs =
-        existingIdx >= 0
-          ? state.doseLogs.map((l, i) =>
-              i === existingIdx ? action.payload : l,
-            )
-          : [...state.doseLogs, action.payload]
-
-      // Decrement inventory only on first "taken" for this dose
-      let supplements = state.supplements
-      if (beingTaken && !alreadyTaken) {
-        supplements = state.supplements.map((s) => {
-          if (s.id !== action.payload.supplementId) return s
-          const amount = dosageInventoryAmount(s.dosage)
-          return { ...s, currentCount: Math.max(0, s.currentCount - amount) }
-        })
-      }
-
-      return { ...state, supplements, doseLogs: newLogs }
-    }
+    case "LOG_DOSE":
+      return { ...state, ...logDose(state, action.payload) }
 
     case "LOG_WELLNESS": {
       const existingIdx = state.wellnessLogs.findIndex(
