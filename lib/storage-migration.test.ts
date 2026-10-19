@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { detectSchemaVersion, migrateStoredAppState } from "./storage-migration"
+import {
+  detectSchemaVersion,
+  hasDroppedRecords,
+  migrateStoredAppState,
+  totalDroppedRecords,
+} from "./storage-migration"
 
 const legacySupplement = {
   id: "custom-magnesium",
@@ -380,6 +385,22 @@ describe("migrateStoredAppState", () => {
   })
 })
 
+describe("dropped-record helpers", () => {
+  it("totals drops across every collection", () => {
+    expect(totalDroppedRecords(NO_DROPS)).toBe(0)
+    expect(
+      totalDroppedRecords({ supplements: 1, doseLogs: 2, wellnessLogs: 3 }),
+    ).toBe(6)
+  })
+
+  it("detects whether any collection dropped a record", () => {
+    expect(hasDroppedRecords(NO_DROPS)).toBe(false)
+    expect(
+      hasDroppedRecords({ supplements: 0, doseLogs: 1, wellnessLogs: 0 }),
+    ).toBe(true)
+  })
+})
+
 describe("detectSchemaVersion", () => {
   it("treats a missing version as version 0", () => {
     expect(detectSchemaVersion({ supplements: [] })).toEqual({
@@ -388,23 +409,26 @@ describe("detectSchemaVersion", () => {
     })
   })
 
-  it("returns a numeric stored version as-is", () => {
-    expect(detectSchemaVersion({ schemaVersion: 0 })).toEqual({
-      status: "ok",
-      version: 0,
-    })
-    expect(detectSchemaVersion({ schemaVersion: 1 })).toEqual({
-      status: "ok",
-      version: 1,
-    })
-    expect(detectSchemaVersion({ schemaVersion: 42 })).toEqual({
-      status: "ok",
-      version: 42,
-    })
+  it("returns any finite numeric stored version as-is", () => {
+    for (const version of [0, 1, 42, 2.5, -1]) {
+      expect(detectSchemaVersion({ schemaVersion: version })).toEqual({
+        status: "ok",
+        version,
+      })
+    }
   })
 
-  it("treats a non-numeric version as version 0", () => {
-    for (const schemaVersion of ["1", null, undefined, true, {}]) {
+  it("treats a non-numeric or non-finite version as version 0", () => {
+    for (const schemaVersion of [
+      "1",
+      null,
+      undefined,
+      true,
+      {},
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
       expect(detectSchemaVersion({ schemaVersion })).toEqual({
         status: "ok",
         version: 0,

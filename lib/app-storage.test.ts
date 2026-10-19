@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, expectTypeOf, it } from "vitest"
 import type { AppState } from "./app-state"
 import {
+  BACKUP_KEY_PREFIX,
   STORAGE_KEY,
   createAppStorage,
   type LoadStateResult,
@@ -116,6 +117,28 @@ describe("createAppStorage", () => {
 
       expect(storage.loadState()).toEqual({ status: "empty" })
       expect(adapter.stored()).toBeNull()
+    })
+
+    it("treats an empty string as empty without a backup", () => {
+      const adapter = createMemoryAdapter({ initial: "" })
+      const storage = createAppStorage(adapter)
+
+      expect(storage.loadState()).toEqual({ status: "empty" })
+      expect(adapter.setAttempts).toEqual([])
+      expect(adapter.stored()).toBe("")
+    })
+
+    it("treats whitespace-only content as non-empty and recovers it with a backup", () => {
+      const raw = "   "
+      const adapter = createMemoryAdapter({ initial: raw })
+      const storage = createAppStorage(adapter)
+
+      const load = expectRecovered(storage.loadState())
+      expect(load.state).toEqual(EMPTY_STATE)
+      expect(load.dropped).toEqual(NO_DROPS)
+      expect(adapter.stored(load.backupKey)).toBe(raw)
+      expect(adapter.stored()).toBe(raw)
+      expect(adapter.setAttempts).toEqual([load.backupKey])
     })
 
     it("loads canonical data as ok without reporting a migration", () => {
@@ -328,17 +351,62 @@ describe("createAppStorage", () => {
         expect(adapter.setAttempts).toEqual([load.backupKey])
       }
     })
+
+    it("recovers a payload whose collection is present but not an array", () => {
+      const cases: Array<{ raw: string; state: AppState }> = [
+        {
+          raw: JSON.stringify({ schemaVersion: 1, supplements: "x" }),
+          state: EMPTY_STATE,
+        },
+        {
+          raw: JSON.stringify({
+            doseLogs: null,
+            wellnessLogs: canonicalState.wellnessLogs,
+          }),
+          state: { ...EMPTY_STATE, wellnessLogs: canonicalState.wellnessLogs },
+        },
+        {
+          raw: JSON.stringify({
+            schemaVersion: 1,
+            supplements: "not an array",
+            doseLogs: canonicalState.doseLogs,
+            wellnessLogs: canonicalState.wellnessLogs,
+          }),
+          state: {
+            supplements: [],
+            doseLogs: canonicalState.doseLogs,
+            wellnessLogs: canonicalState.wellnessLogs,
+          },
+        },
+      ]
+
+      for (const { raw, state } of cases) {
+        const adapter = createMemoryAdapter({ initial: raw })
+        const storage = createAppStorage(adapter)
+
+        const load = expectRecovered(storage.loadState())
+        expect(load.state).toEqual(state)
+        expect(load.dropped).toEqual(NO_DROPS)
+        expect(adapter.stored(load.backupKey)).toBe(raw)
+        expect(adapter.stored()).toBe(raw)
+        expect(adapter.setAttempts).toEqual([load.backupKey])
+      }
+    })
   })
 
-  describe("failed loads", () => {
-    it("returns incompatible with the stored version and never writes over it", () => {
-      for (const version of [2, 99]) {
+  describe("guarded loads", () => {
+    it("returns incompatible with a newer stored version, takes no backup, and never writes", () => {
+      for (const version of [2, 99, 2.5]) {
         const raw = JSON.stringify({ schemaVersion: version, ...canonicalState })
         const adapter = createMemoryAdapter({ initial: raw })
         const storage = createAppStorage(adapter)
 
         expect(storage.loadState()).toEqual({ status: "incompatible", version })
         expect(adapter.stored()).toBe(raw)
+        expect(adapter.setAttempts).toEqual([])
+        expect(
+          adapter.keys().filter((key) => key.startsWith(BACKUP_KEY_PREFIX)),
+        ).toEqual([])
 
         expect(storage.saveState(canonicalState).status).toBe("failed")
         expect(adapter.stored()).toBe(raw)
@@ -399,5 +467,13 @@ describe("createAppStorage", () => {
         })
       }
     })
+  })
+})
+
+describe("LoadStateResult", () => {
+  it("has exactly the documented variants", () => {
+    expectTypeOf<LoadStateResult["status"]>().toEqualTypeOf<
+      "ok" | "empty" | "recovered" | "incompatible" | "unavailable"
+    >()
   })
 })

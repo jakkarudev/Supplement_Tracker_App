@@ -29,7 +29,10 @@ import {
   localStorageAdapter,
   type SaveFailureReason,
 } from "@/lib/app-storage"
-import type { DroppedRecordCounts } from "@/lib/storage-migration"
+import {
+  totalDroppedRecords,
+  type DroppedRecordCounts,
+} from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
@@ -103,15 +106,14 @@ const INITIAL_STATE: AppState = {
 const storage = createAppStorage(localStorageAdapter)
 
 /**
- * The provider's hydration status. `recovered` means the payload lost data,
- * was backed up, and the salvaged state should be written back in the current
- * format. `incompatible` means the stored payload was written by a newer
- * build: the provider hydrates empty, toasts why, and never writes, so the
- * payload is left untouched. `unavailable` means storage could not be reached
- * at load time: the provider serves the empty state, warns that changes will
- * not be saved, and never writes. `failed` covers any other failed load — the
- * provider hydrates empty and never writes, so the stored payload is left
- * untouched.
+ * The provider's hydration status. `recovered` means the payload lost data or
+ * failed the top-level shape check, was backed up, and the salvaged state
+ * should be written back in the current format. `incompatible` means the
+ * stored payload was written by a newer build: the provider hydrates empty,
+ * toasts why, and never writes, so the payload is left untouched.
+ * `unavailable` means storage could not be reached at load time: the provider
+ * serves the empty state, warns that changes will not be saved, and never
+ * writes.
  */
 type HydrationStatus =
   | "loading"
@@ -119,7 +121,6 @@ type HydrationStatus =
   | "recovered"
   | "incompatible"
   | "unavailable"
-  | "failed"
 
 /** The description shown when a save fails, keyed by its classified reason. */
 const SAVE_FAILURE_DESCRIPTIONS: Record<SaveFailureReason, string> = {
@@ -131,8 +132,9 @@ const SAVE_FAILURE_DESCRIPTIONS: Record<SaveFailureReason, string> = {
 const StateCtx = createContext<AppState>(INITIAL_STATE)
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
 
-function totalDropped(dropped: DroppedRecordCounts): number {
-  return dropped.supplements + dropped.doseLogs + dropped.wellnessLogs
+/** Compile-time exhaustiveness guard for discriminated unions. */
+function assertNever(value: never): never {
+  throw new Error(`Unexpected load status: ${String(value)}`)
 }
 
 /**
@@ -140,7 +142,7 @@ function totalDropped(dropped: DroppedRecordCounts): number {
  * details go to the console so the one-line summary stays readable.
  */
 function announceRecovery(backupKey: string, dropped: DroppedRecordCounts) {
-  const total = totalDropped(dropped)
+  const total = totalDroppedRecords(dropped)
   console.warn("Recovered stored data", { backupKey, dropped })
 
   toast.warning(
@@ -206,19 +208,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         })
         setStatus("unavailable")
         return
-
-      default:
-        // The load failed and the payload was left untouched. Never enable
-        // writes after a failed read.
-        setStatus("failed")
     }
+
+    // Unreachable: every load result variant returns above. A new variant
+    // makes this fail to compile rather than silently hydrating nothing.
+    assertNever(result)
   }, [])
 
   // Persist after hydration: once for a loaded payload and on every change
   // after that. A recovered load also writes once here, which saves the
   // salvaged state back in the current format so recovery cannot repeat.
-  // Nothing is written while loading, while storage is unavailable, after a
-  // failed load, or when the stored data is incompatible with this build.
+  // Nothing is written while loading, while storage is unavailable, or when
+  // the stored data is incompatible with this build.
   useEffect(() => {
     if (status !== "ready" && status !== "recovered") return
 
@@ -243,8 +244,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state, status])
 
+  // Recovered loads carry salvageable supplements too, so they schedule
+  // reminders like any loaded state. Incompatible and unavailable loads
+  // hydrate empty and never schedule.
   useEffect(() => {
-    if (status !== "ready") return
+    if (status !== "ready" && status !== "recovered") return
 
     void scheduleNativeSupplementReminders(state.supplements).then((result) => {
       if (result.status === "error") {

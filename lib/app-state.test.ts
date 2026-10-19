@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { describe, expect, expectTypeOf, it } from "vitest"
 import type { AppState } from "./app-state"
 import type { AppState as ProviderAppState } from "./app-context"
@@ -41,16 +41,19 @@ describe("AppState", () => {
 
 describe("storage modules", () => {
   it("do not import the app provider", () => {
-    const storageFiles = readdirSync(new URL(".", import.meta.url)).filter(
-      (name) => /^storage-.*\.ts$/.test(name) && !name.endsWith(".test.ts"),
-    )
-
-    expect(storageFiles.length).toBeGreaterThan(0)
+    // Every module of the persistence seam: the state shape and the two
+    // storage modules. Listed explicitly so a module that is not covered by
+    // the naming pattern cannot slip past this guard.
+    const storageModules = [
+      "app-state.ts",
+      "app-storage.ts",
+      "storage-migration.ts",
+    ]
 
     const providerImport =
       /from\s+["'][^"']*app-context["']|import\(\s*["'][^"']*app-context["']\s*\)/
 
-    for (const name of storageFiles) {
+    for (const name of storageModules) {
       const source = readFileSync(new URL(name, import.meta.url), "utf8")
       expect(source, `${name} must not import the app provider`).not.toMatch(
         providerImport,

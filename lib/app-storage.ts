@@ -2,6 +2,7 @@ import type { AppState } from "./app-state"
 import {
   CURRENT_SCHEMA_VERSION,
   detectSchemaVersion,
+  hasDroppedRecords,
   migrateStoredAppState,
   type DroppedRecordCounts,
 } from "./storage-migration"
@@ -29,26 +30,25 @@ export type StorageAdapter = {
 /**
  * The outcome of a load. `ok` carries the canonical state and the version it
  * was migrated from (null when it was already current); `empty` means nothing
- * usable was stored; `incompatible` carries the stored version when it is
- * newer than this build, and means the payload is never migrated or written
- * over; `unavailable` means storage itself could not be reached, so the app
- * must stay usable in memory and never write; `recovered` means the stored
- * payload lost data and a verbatim backup was written before the salvaged
- * state is saved back; `failed` carries the error that stopped the load for
- * every other case.
+ * usable was stored; `recovered` means the stored payload could not be parsed,
+ * failed the top-level shape check, or lost data, and a verbatim backup was
+ * written before the salvaged state is saved back; `incompatible` carries the
+ * stored version when it is newer than this build, and means the payload is
+ * never migrated or written over; `unavailable` means storage itself could not
+ * be reached, or a recovery backup could not be written, so the app must stay
+ * usable in memory and never write.
  */
 export type LoadStateResult =
   | { status: "ok"; state: AppState; migratedFrom: number | null }
   | { status: "empty" }
-  | { status: "incompatible"; version: number }
-  | { status: "unavailable"; error: unknown }
   | {
       status: "recovered"
       state: AppState
       backupKey: string
       dropped: DroppedRecordCounts
     }
-  | { status: "failed"; error: unknown }
+  | { status: "incompatible"; version: number }
+  | { status: "unavailable"; error: unknown }
 
 export type SaveFailureReason = "quota" | "unavailable" | "unknown"
 
@@ -77,10 +77,6 @@ function emptyState(): AppState {
 
 function noDrops(): DroppedRecordCounts {
   return { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
-}
-
-function hasDroppedRecords(dropped: DroppedRecordCounts): boolean {
-  return dropped.supplements + dropped.doseLogs + dropped.wellnessLogs > 0
 }
 
 /**
@@ -123,6 +119,25 @@ function parsePayload(raw: string): ParsedPayload {
   }
 }
 
+/** Every collection key a stored payload may carry, including the legacy name. */
+const COLLECTION_KEYS = ["supplements", "doseLogs", "intakeLogs", "wellnessLogs"] as const
+
+/**
+ * The top-level shape check: a payload that carries a known collection key
+ * whose value is not an array has lost that collection. It must be backed up
+ * and recovered, never silently emptied by the normalizer and then written
+ * over.
+ */
+function hasInvalidCollectionShape(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false
+  }
+  const payload = value as Record<string, unknown>
+  return COLLECTION_KEYS.some(
+    (key) => key in payload && !Array.isArray(payload[key]),
+  )
+}
+
 /**
  * Builds the storage seam over an injected adapter. The seam owns reading,
  * parsing, version detection, migration, and normalization; callers only ever
@@ -131,8 +146,9 @@ function parsePayload(raw: string): ParsedPayload {
 export function createAppStorage(adapter: StorageAdapter): AppStorage {
   // A load that cannot use the stored payload disables writes until a load
   // succeeds again, so the payload that failed to load is never written over.
-  // Recovery (#23) restores writes after a successful backup; an incompatible
-  // newer-version payload and unavailable storage (#25) keep them off.
+  // A recovery that backs the raw payload up successfully re-enables writes so
+  // the salvaged state is saved back; an incompatible newer-version payload
+  // and unavailable storage keep them off.
   let writesDisabled = false
 
   return {
@@ -147,32 +163,32 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
         return { status: "unavailable", error }
       }
 
-      try {
-        if (raw === null || raw === "") {
+      if (raw === null || raw === "") {
+        writesDisabled = false
+        return { status: "empty" }
+      }
+
+      const storedPayload = raw
+
+      // Backs the raw payload up verbatim before any write can follow and
+      // returns the recovered result. A backup that cannot be written
+      // leaves the original untouched and makes the load unavailable, so
+      // no write follows it either.
+      const recover = (
+        state: AppState,
+        dropped: DroppedRecordCounts,
+      ): LoadStateResult => {
+        try {
+          const backupKey = backupPayload(adapter, storedPayload)
           writesDisabled = false
-          return { status: "empty" }
+          return { status: "recovered", state, backupKey, dropped }
+        } catch (error) {
+          writesDisabled = true
+          return { status: "unavailable", error }
         }
+      }
 
-        const storedPayload = raw
-
-        // Backs the raw payload up verbatim before any write can follow and
-        // returns the recovered result. A backup that cannot be written
-        // leaves the original untouched and makes the load unavailable, so
-        // no write follows it either.
-        const recover = (
-          state: AppState,
-          dropped: DroppedRecordCounts,
-        ): LoadStateResult => {
-          try {
-            const backupKey = backupPayload(adapter, storedPayload)
-            writesDisabled = false
-            return { status: "recovered", state, backupKey, dropped }
-          } catch (error) {
-            writesDisabled = true
-            return { status: "unavailable", error }
-          }
-        }
-
+      try {
         const parsed = parsePayload(storedPayload)
         if (parsed.status === "unparseable") {
           return recover(emptyState(), noDrops())
@@ -191,14 +207,15 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
 
         const migration = migrateStoredAppState(parsed.value)
         if (migration.status !== "ok") {
-          writesDisabled = true
-          return {
-            status: "failed",
-            error: new Error("Stored payload could not be normalized"),
-          }
+          // Defensive: version detection already accepted the payload, but a
+          // corrupt migration result still gets the recovery treatment.
+          return recover(emptyState(), noDrops())
         }
 
-        if (hasDroppedRecords(migration.dropped)) {
+        if (
+          hasInvalidCollectionShape(parsed.value) ||
+          hasDroppedRecords(migration.dropped)
+        ) {
           return recover(migration.state, migration.dropped)
         }
 
@@ -208,9 +225,11 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
           state: migration.state,
           migratedFrom: migration.migratedFrom,
         }
-      } catch (error) {
-        writesDisabled = true
-        return { status: "failed", error }
+      } catch {
+        // Anything unexpected while processing a non-empty payload still
+        // backs the raw value up before recovering, so nothing can be
+        // overwritten without a backup.
+        return recover(emptyState(), noDrops())
       }
     },
 
