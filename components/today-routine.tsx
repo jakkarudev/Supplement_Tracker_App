@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { BedDouble, Moon, Pill, Sunrise, Sun, Sunset } from "lucide-react"
+import { BedDouble, Moon, Pill, RotateCcw, Sunrise, Sun, Sunset } from "lucide-react"
 import { WeekStrip } from "@/components/week-strip"
 import { StatusBadge } from "@/components/status-badge"
 import { SlideToConfirm } from "@/components/slide-to-confirm"
@@ -26,13 +26,15 @@ const periodMeta: Record<Period, { Icon: typeof Sun; label: string }> = {
 }
 
 type TodayRoutineProps = {
-  date?: CalendarDate
+  date: CalendarDate
+  onSelectDate: (date: CalendarDate) => void
 }
 
-export function TodayRoutine({ date }: TodayRoutineProps = {}) {
+export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineProps) {
   const { supplements, doseLogs } = useAppState()
   const dispatch = useAppDispatch()
-  const selectedDate = date ?? today()
+  const todayDate = today()
+  const isToday = selectedDate === todayDate
 
   const regimen = useMemo(
     () => dayRegimen({ supplements, doseLogs }, selectedDate),
@@ -57,6 +59,9 @@ export function TodayRoutine({ date }: TodayRoutineProps = {}) {
   const pct = totalCount === 0 ? 0 : Math.round((takenCount / totalCount) * 100)
 
   function logDose(item: ScheduledDose, status: DoseStatus) {
+    // Browsing past or future days is read-only; only today can be logged.
+    if (!isToday) return
+
     dispatch({
       type: "LOG_DOSE",
       payload: {
@@ -75,7 +80,9 @@ export function TodayRoutine({ date }: TodayRoutineProps = {}) {
       <div className="glass rounded-[1.25rem] p-4 sm:rounded-3xl sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-sm font-medium text-muted-foreground">Today&apos;s progress</p>
+            <p className="text-sm font-medium text-muted-foreground">
+              {isToday ? "Today's progress" : formatCalendarDate(selectedDate)}
+            </p>
             <p className="mt-1 text-3xl font-semibold tracking-tight">
               {takenCount}
               <span className="text-muted-foreground">/{totalCount}</span>
@@ -83,9 +90,21 @@ export function TodayRoutine({ date }: TodayRoutineProps = {}) {
             </p>
           </div>
           <div className="text-right">
-            <p className="text-sm font-medium text-muted-foreground">
-              {formatCalendarDate(selectedDate)}
-            </p>
+            {isToday ? (
+              <p className="text-sm font-medium text-muted-foreground">
+                {formatCalendarDate(selectedDate)}
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onSelectDate(todayDate)}
+                aria-label="Back to today"
+                className="inline-flex items-center gap-1 rounded-full text-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Back to today
+              </button>
+            )}
             <p className="text-sm font-semibold text-primary">{pct}% complete</p>
           </div>
         </div>
@@ -98,12 +117,16 @@ export function TodayRoutine({ date }: TodayRoutineProps = {}) {
       </div>
 
       {/* Week calendar strip */}
-      <WeekStrip />
+      <WeekStrip selectedDate={selectedDate} onSelectDate={onSelectDate} />
 
       {doses.length === 0 ? (
         <div className="glass rounded-[1.25rem] p-6 text-center text-muted-foreground sm:rounded-3xl sm:p-8">
           <Pill className="mx-auto mb-3 h-8 w-8 opacity-40" />
-          <p className="text-sm">No supplements scheduled for today.</p>
+          <p className="text-sm">
+            {isToday
+              ? "No supplements scheduled for today."
+              : "No supplements scheduled for this day."}
+          </p>
           <p className="mt-1 text-xs">Add one using the + tab.</p>
         </div>
       ) : (
@@ -133,6 +156,7 @@ export function TodayRoutine({ date }: TodayRoutineProps = {}) {
                       potency={item.supplement.potency}
                       dosage={item.supplement.dosage}
                       status={item.status}
+                      readOnly={!isToday}
                       onConfirm={() => logDose(item, "taken")}
                       onSnooze={() => logDose(item, "snoozed")}
                     />
@@ -153,11 +177,21 @@ type DoseCardProps = {
   potency: string
   dosage: string
   status: DoseStatus
+  readOnly: boolean
   onConfirm: () => void
   onSnooze: () => void
 }
 
-function DoseCard({ name, brand, potency, dosage, status, onConfirm, onSnooze }: DoseCardProps) {
+function DoseCard({
+  name,
+  brand,
+  potency,
+  dosage,
+  status,
+  readOnly,
+  onConfirm,
+  onSnooze,
+}: DoseCardProps) {
   return (
     <div
       className={cn(
@@ -184,7 +218,7 @@ function DoseCard({ name, brand, potency, dosage, status, onConfirm, onSnooze }:
         </div>
       </div>
 
-      {status !== "taken" && (
+      {!readOnly && status !== "taken" && (
         <div className="mt-4 flex items-center gap-2">
           <div className="flex-1">
             <SlideToConfirm onConfirm={onConfirm} />
