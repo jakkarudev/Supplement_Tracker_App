@@ -9,6 +9,7 @@ import {
   useState,
   useMemo,
 } from "react"
+import { toast } from "sonner"
 import {
   type Supplement,
   type WellnessLog,
@@ -24,6 +25,7 @@ import {
   type LogDoseInput,
 } from "@/lib/regimen-actions"
 import { createAppStorage, localStorageAdapter } from "@/lib/app-storage"
+import type { DroppedRecordCounts } from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
@@ -97,16 +99,36 @@ const INITIAL_STATE: AppState = {
 const storage = createAppStorage(localStorageAdapter)
 
 /**
- * The provider's hydration status. `failed` is the stopgap for a load that
- * reported a failure — an unreadable payload, an invalid shape, or a version
- * newer than this build: the provider hydrates empty and never writes, so the
- * stored payload is left untouched. #23–#25 split it into recovered,
- * incompatible, and unavailable as recovery and toasts land.
+ * The provider's hydration status. `recovered` means the payload lost data,
+ * was backed up, and the salvaged state should be written back in the current
+ * format. `failed` is the stopgap for a load that reported a failure — an
+ * unreadable payload, an invalid shape, or a version newer than this build:
+ * the provider hydrates empty and never writes, so the stored payload is left
+ * untouched. #24–#25 split it into incompatible and unavailable.
  */
-type HydrationStatus = "loading" | "ready" | "failed"
+type HydrationStatus = "loading" | "ready" | "recovered" | "failed"
 
 const StateCtx = createContext<AppState>(INITIAL_STATE)
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
+
+function totalDropped(dropped: DroppedRecordCounts): number {
+  return dropped.supplements + dropped.doseLogs + dropped.wellnessLogs
+}
+
+/**
+ * Toasts the backup location and how much was lost. The per-collection
+ * details go to the console so the one-line summary stays readable.
+ */
+function announceRecovery(backupKey: string, dropped: DroppedRecordCounts) {
+  const total = totalDropped(dropped)
+  console.warn("Recovered stored data", { backupKey, dropped })
+
+  toast.warning(
+    total === 0
+      ? `Recovered your data from a damaged store; no records were dropped. Backup saved as ${backupKey}.`
+      : `Recovered your data; ${total} record${total === 1 ? "" : "s"} were dropped. Backup saved as ${backupKey}.`,
+  )
+}
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   // Always render the same initial state on server and first client pass.
@@ -129,6 +151,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setStatus("ready")
         return
 
+      case "recovered":
+        announceRecovery(result.backupKey, result.dropped)
+        dispatch({ type: "HYDRATE", payload: result.state })
+        setStatus("recovered")
+        return
+
       case "empty":
         freshInstall.current = true
         setStatus("ready")
@@ -142,9 +170,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   // Persist after hydration: once for a loaded payload and on every change
-  // after that. Nothing is written while loading or after a failed load.
+  // after that. A recovered load also writes once here, which saves the
+  // salvaged state back in the current format so recovery cannot repeat.
+  // Nothing is written while loading or after a failed load.
   useEffect(() => {
-    if (status !== "ready") return
+    if (status !== "ready" && status !== "recovered") return
 
     if (freshInstall.current) {
       freshInstall.current = false

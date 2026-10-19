@@ -38,34 +38,73 @@ const canonicalState: AppState = {
 }
 
 type MemoryAdapter = StorageAdapter & {
-  stored: () => string | null
-  store: (value: string | null) => void
+  stored: (key?: string) => string | null
+  store: (value: string | null, key?: string) => void
+  keys: () => string[]
+  setAttempts: string[]
+  removeAttempts: string[]
 }
 
 function createMemoryAdapter(
-  options: { initial?: string; getError?: unknown; setError?: unknown } = {},
+  options: {
+    initial?: string
+    getError?: unknown
+    setError?: unknown
+    removeError?: unknown
+  } = {},
 ): MemoryAdapter {
-  let stored = options.initial ?? null
+  const values = new Map<string, string>()
+  if (options.initial !== undefined) values.set(STORAGE_KEY, options.initial)
+  const setAttempts: string[] = []
+  const removeAttempts: string[] = []
 
   return {
     getItem(key) {
       if (options.getError !== undefined) throw options.getError
-      return key === STORAGE_KEY ? stored : null
+      return values.get(key) ?? null
     },
     setItem(key, value) {
+      setAttempts.push(key)
       if (options.setError !== undefined) throw options.setError
-      if (key === STORAGE_KEY) stored = value
+      values.set(key, value)
     },
-    stored: () => stored,
-    store: (value) => {
-      stored = value
+    removeItem(key) {
+      removeAttempts.push(key)
+      if (options.removeError !== undefined) throw options.removeError
+      values.delete(key)
     },
+    keys: () => [...values.keys()],
+    stored: (key = STORAGE_KEY) => values.get(key) ?? null,
+    store: (value, key = STORAGE_KEY) => {
+      if (value === null) values.delete(key)
+      else values.set(key, value)
+    },
+    setAttempts,
+    removeAttempts,
   }
 }
+
+const EMPTY_STATE: AppState = {
+  supplements: [],
+  doseLogs: [],
+  wellnessLogs: [],
+}
+
+const NO_DROPS = { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
+
+const BACKUP_KEY_PATTERN = /^regimen-v1\.corrupt\.\d{4}-\d{2}-\d{2}T[\d:.]+Z$/
 
 function expectOk(result: LoadStateResult) {
   expect(result.status).toBe("ok")
   if (result.status !== "ok") throw new Error("expected an ok load result")
+  return result
+}
+
+function expectRecovered(result: LoadStateResult) {
+  expect(result.status).toBe("recovered")
+  if (result.status !== "recovered") {
+    throw new Error("expected a recovered load result")
+  }
   return result
 }
 
@@ -154,35 +193,144 @@ describe("createAppStorage", () => {
     })
   })
 
-  describe("failed loads", () => {
-    it("fails an unparseable payload and never writes over it", () => {
+  describe("recovery", () => {
+    it("recovers an unparseable payload with a verbatim backup and salvaged empty state", () => {
       const raw = "{ not json"
       const adapter = createMemoryAdapter({ initial: raw })
       const storage = createAppStorage(adapter)
 
-      const load = storage.loadState()
-      expect(load.status).toBe("failed")
-      if (load.status !== "failed") throw new Error("expected a failed load")
-      expect(load.error).toBeInstanceOf(SyntaxError)
+      const load = expectRecovered(storage.loadState())
+      expect(load.state).toEqual(EMPTY_STATE)
+      expect(load.dropped).toEqual(NO_DROPS)
+      expect(load.backupKey).toMatch(BACKUP_KEY_PATTERN)
+      expect(adapter.stored(load.backupKey)).toBe(raw)
       expect(adapter.stored()).toBe(raw)
-
-      expect(storage.saveState(canonicalState).status).toBe("failed")
-      expect(adapter.stored()).toBe(raw)
+      expect(adapter.setAttempts).toEqual([load.backupKey])
     })
 
-    it("fails a payload whose top-level shape is invalid and never writes over it", () => {
-      for (const raw of ["42", '"state"', "[]", "null"]) {
-        const adapter = createMemoryAdapter({ initial: raw })
+    it("recovers dropped records with per-collection counts and a backup", () => {
+      const raw = JSON.stringify({
+        schemaVersion: 1,
+        supplements: [
+          canonicalState.supplements[0],
+          { name: "missing id and form" },
+          "not a supplement",
+        ],
+        doseLogs: [
+          canonicalState.doseLogs[0],
+          { id: "bad-date", supplementId: "custom-magnesium", date: "nope" },
+        ],
+        wellnessLogs: [
+          canonicalState.wellnessLogs[0],
+          { date: "2026-02-30", energy: 7, focus: 8 },
+          { date: "2026-05-02", energy: 0, focus: 8 },
+        ],
+      })
+      const adapter = createMemoryAdapter({ initial: raw })
+      const storage = createAppStorage(adapter)
+
+      const load = expectRecovered(storage.loadState())
+      expect(load.state).toEqual(canonicalState)
+      expect(load.dropped).toEqual({
+        supplements: 2,
+        doseLogs: 1,
+        wellnessLogs: 2,
+      })
+      expect(adapter.stored(load.backupKey)).toBe(raw)
+      expect(adapter.setAttempts).toEqual([load.backupKey])
+
+      expect(storage.saveState(load.state)).toEqual({ status: "saved" })
+      expect(JSON.parse(adapter.stored() ?? "")).toEqual({
+        schemaVersion: 1,
+        ...canonicalState,
+      })
+    })
+
+    it("prunes recovery backups to the three newest", () => {
+      const adapter = createMemoryAdapter({ initial: "{ not json" })
+      const oldBackups = [
+        "regimen-v1.corrupt.2000-01-01T00:00:00.000Z",
+        "regimen-v1.corrupt.2001-01-01T00:00:00.000Z",
+        "regimen-v1.corrupt.2002-01-01T00:00:00.000Z",
+        "regimen-v1.corrupt.2003-01-01T00:00:00.000Z",
+      ]
+      for (const key of oldBackups) adapter.store("old payload", key)
+
+      const load = expectRecovered(createAppStorage(adapter).loadState())
+
+      expect(
+        adapter.keys().filter((key) => key.startsWith("regimen-v1.corrupt.")).sort(),
+      ).toEqual([
+        "regimen-v1.corrupt.2002-01-01T00:00:00.000Z",
+        "regimen-v1.corrupt.2003-01-01T00:00:00.000Z",
+        load.backupKey,
+      ])
+      expect(adapter.removeAttempts).toEqual([
+        "regimen-v1.corrupt.2000-01-01T00:00:00.000Z",
+        "regimen-v1.corrupt.2001-01-01T00:00:00.000Z",
+      ])
+    })
+
+    it("fails safely when the backup cannot be written", () => {
+      const backupError = new Error("backup write failed")
+      const payloads = [
+        "{ not json",
+        JSON.stringify({
+          schemaVersion: 1,
+          supplements: [canonicalState.supplements[0], "not a supplement"],
+          doseLogs: [],
+          wellnessLogs: [],
+        }),
+      ]
+
+      for (const raw of payloads) {
+        const adapter = createMemoryAdapter({ initial: raw, setError: backupError })
         const storage = createAppStorage(adapter)
 
-        expect(storage.loadState().status).toBe("failed")
+        const load = storage.loadState()
+        expect(load).toEqual({ status: "failed", error: backupError })
         expect(adapter.stored()).toBe(raw)
+        expect(adapter.setAttempts).toEqual([
+          expect.stringMatching(BACKUP_KEY_PATTERN),
+        ])
 
+        // A failed backup disables writes: the load must not be followed by one.
         expect(storage.saveState(canonicalState).status).toBe("failed")
+        expect(adapter.setAttempts).toHaveLength(1)
         expect(adapter.stored()).toBe(raw)
       }
     })
 
+    it("writes salvaged state back in the current format after recovery", () => {
+      const raw = "{ not json"
+      const adapter = createMemoryAdapter({ initial: raw })
+      const storage = createAppStorage(adapter)
+
+      const load = expectRecovered(storage.loadState())
+      expect(storage.saveState(load.state)).toEqual({ status: "saved" })
+
+      expect(JSON.parse(adapter.stored() ?? "")).toEqual({
+        schemaVersion: 1,
+        ...EMPTY_STATE,
+      })
+    })
+
+    it("recovers a payload whose top-level shape is invalid with a backup", () => {
+      for (const raw of ["42", '"state"', "[]", "null"]) {
+        const adapter = createMemoryAdapter({ initial: raw })
+        const storage = createAppStorage(adapter)
+
+        const load = expectRecovered(storage.loadState())
+        expect(load.state).toEqual(EMPTY_STATE)
+        expect(load.dropped).toEqual(NO_DROPS)
+        expect(adapter.stored(load.backupKey)).toBe(raw)
+        expect(adapter.stored()).toBe(raw)
+        expect(adapter.setAttempts).toEqual([load.backupKey])
+      }
+    })
+  })
+
+  describe("failed loads", () => {
     it("fails a payload with a version newer than the current one and never writes over it", () => {
       const raw = JSON.stringify({ schemaVersion: 99, ...canonicalState })
       const adapter = createMemoryAdapter({ initial: raw })

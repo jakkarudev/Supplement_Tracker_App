@@ -3,6 +3,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   detectSchemaVersion,
   migrateStoredAppState,
+  type DroppedRecordCounts,
 } from "./storage-migration"
 
 /**
@@ -11,23 +12,37 @@ import {
  */
 export const STORAGE_KEY = "regimen-v1"
 
+/** Recovery copies live beside the live key, one per corrupt load. */
+export const BACKUP_KEY_PREFIX = `${STORAGE_KEY}.corrupt.`
+
+/** Keep only this many of the newest recovery copies. */
+const MAX_BACKUPS = 3
+
 /** The minimal Web Storage surface the seam needs. */
 export type StorageAdapter = {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
+  removeItem(key: string): void
+  keys(): string[]
 }
 
 /**
  * The outcome of a load. `ok` carries the canonical state and the version it
  * was migrated from (null when it was already current); `empty` means nothing
- * usable was stored; `failed` carries the error that stopped the load. The
- * spec splits `failed` into recovered, incompatible, and unavailable as
- * recovery (#23), the typed newer-version result (#24), and storage
- * availability (#25) land.
+ * usable was stored; `recovered` means the stored payload lost data and a
+ * verbatim backup was written before the salvaged state is saved back;
+ * `failed` carries the error that stopped the load. The spec splits `failed`
+ * further into incompatible and unavailable as #24 and #25 land.
  */
 export type LoadStateResult =
   | { status: "ok"; state: AppState; migratedFrom: number | null }
   | { status: "empty" }
+  | {
+      status: "recovered"
+      state: AppState
+      backupKey: string
+      dropped: DroppedRecordCounts
+    }
   | { status: "failed"; error: unknown }
 
 export type SaveFailureReason = "quota" | "unavailable" | "unknown"
@@ -51,6 +66,69 @@ function serializeState(state: AppState): string {
   })
 }
 
+function emptyState(): AppState {
+  return { supplements: [], doseLogs: [], wellnessLogs: [] }
+}
+
+function noDrops(): DroppedRecordCounts {
+  return { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
+}
+
+function hasDroppedRecords(dropped: DroppedRecordCounts): boolean {
+  return dropped.supplements + dropped.doseLogs + dropped.wellnessLogs > 0
+}
+
+/**
+ * Writes the raw stored string verbatim to a timestamped backup key before
+ * anything can overwrite it, then prunes older copies. Throws when the backup
+ * or pruning cannot be written, so the caller can leave the original alone.
+ */
+function backupPayload(adapter: StorageAdapter, raw: string): string {
+  const backupKey = `${BACKUP_KEY_PREFIX}${new Date().toISOString()}`
+  adapter.setItem(backupKey, raw)
+  pruneBackups(adapter)
+  return backupKey
+}
+
+/** Keeps only the three newest backup keys; ISO timestamps sort oldest first. */
+function pruneBackups(adapter: StorageAdapter): void {
+  const backupKeys = adapter
+    .keys()
+    .filter((key) => key.startsWith(BACKUP_KEY_PREFIX))
+    .sort()
+
+  for (const key of backupKeys.slice(0, Math.max(0, backupKeys.length - MAX_BACKUPS))) {
+    adapter.removeItem(key)
+  }
+}
+
+type ParsedPayload =
+  | { status: "parsed"; value: unknown }
+  | {
+      status: "recovered"
+      state: AppState
+      backupKey: string
+      dropped: DroppedRecordCounts
+    }
+
+/**
+ * Parses the raw payload. An unparseable payload is backed up verbatim and
+ * recovered as empty state; a backup failure propagates so the caller can
+ * stop the load without touching the original.
+ */
+function parsePayload(adapter: StorageAdapter, raw: string): ParsedPayload {
+  try {
+    return { status: "parsed", value: JSON.parse(raw) }
+  } catch {
+    return {
+      status: "recovered",
+      state: emptyState(),
+      backupKey: backupPayload(adapter, raw),
+      dropped: noDrops(),
+    }
+  }
+}
+
 /**
  * Builds the storage seam over an injected adapter. The seam owns reading,
  * parsing, version detection, migration, and normalization; callers only ever
@@ -72,13 +150,21 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
           return { status: "empty" }
         }
 
-        const parsed = JSON.parse(raw)
-        const detection = detectSchemaVersion(parsed)
+        const parsed = parsePayload(adapter, raw)
+        if (parsed.status === "recovered") {
+          writesDisabled = false
+          return parsed
+        }
+
+        const detection = detectSchemaVersion(parsed.value)
         if (detection.status !== "ok") {
-          writesDisabled = true
+          const backupKey = backupPayload(adapter, raw)
+          writesDisabled = false
           return {
-            status: "failed",
-            error: new Error("Stored payload is not a state object"),
+            status: "recovered",
+            state: emptyState(),
+            backupKey,
+            dropped: noDrops(),
           }
         }
         if (detection.version > CURRENT_SCHEMA_VERSION) {
@@ -91,12 +177,23 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
           }
         }
 
-        const migration = migrateStoredAppState(parsed)
+        const migration = migrateStoredAppState(parsed.value)
         if (migration.status !== "ok") {
           writesDisabled = true
           return {
             status: "failed",
             error: new Error("Stored payload could not be normalized"),
+          }
+        }
+
+        if (hasDroppedRecords(migration.dropped)) {
+          const backupKey = backupPayload(adapter, raw)
+          writesDisabled = false
+          return {
+            status: "recovered",
+            state: migration.state,
+            backupKey,
+            dropped: migration.dropped,
           }
         }
 
@@ -150,5 +247,16 @@ export const localStorageAdapter: StorageAdapter = {
   },
   setItem(key, value) {
     window.localStorage.setItem(key, value)
+  },
+  removeItem(key) {
+    window.localStorage.removeItem(key)
+  },
+  keys() {
+    const keys: string[] = []
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index)
+      if (key !== null) keys.push(key)
+    }
+    return keys
   },
 }
