@@ -15,21 +15,22 @@ import {
 import { Slider } from "@/components/ui/slider"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
-import { useAppState, useAppDispatch, todayString } from "@/lib/app-context"
+import { useAppState, useAppDispatch } from "@/lib/app-context"
+import { today } from "@/lib/day-regimen"
 
 export function WellnessCheckin() {
   const dispatch = useAppDispatch()
   const { wellnessLogs } = useAppState()
   const [open, setOpen] = useState(false)
 
-  const todayLog = wellnessLogs.find((w) => w.date === todayString())
+  const todayLog = wellnessLogs.find((w) => w.date === today())
   const [energy, setEnergy] = useState(todayLog?.energy ?? 7)
   const [focus, setFocus] = useState(todayLog?.focus ?? 7)
 
   function handleOpenChange(next: boolean) {
     if (next) {
       // Re-seed sliders from today's log whenever the drawer opens
-      const log = wellnessLogs.find((w) => w.date === todayString())
+      const log = wellnessLogs.find((w) => w.date === today())
       setEnergy(log?.energy ?? 7)
       setFocus(log?.focus ?? 7)
     }
@@ -39,7 +40,7 @@ export function WellnessCheckin() {
   function handleSave() {
     dispatch({
       type: "LOG_WELLNESS",
-      payload: { date: todayString(), energy, focus },
+      payload: { date: today(), energy, focus },
     })
     toast.success("Wellness logged", {
       description: `Energy ${energy}/10 · Focus ${focus}/10`,
