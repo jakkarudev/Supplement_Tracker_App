@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useReducer,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -27,6 +28,7 @@ import {
 import {
   createAppStorage,
   localStorageAdapter,
+  type LoadStateResult,
   type RecoveryCounts,
   type SaveFailureReason,
 } from "@/lib/app-storage"
@@ -193,54 +195,112 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // resets it so the next streak warns again.
   const saveFailureActive = useRef(false)
 
+  // The state object last adopted from another tab. Reference identity lets
+  // the persist effect render an adoption without writing it back, while the
+  // next local action (a new object) still saves.
+  const externallyHydratedState = useRef<AppState | null>(null)
+
+  /**
+   * Routes a load result to state and toasts. A cold start and an external
+   * write share this path, with one difference: an external adoption is
+   * rendered but never written back, so two tabs cannot echo each other or
+   * fight over the key.
+   */
+  const applyLoadResult = useCallback(
+    (result: LoadStateResult, origin: "initial" | "external") => {
+      if (origin === "external") {
+        // An external adoption replaces whatever a fresh install was waiting
+        // to skip; the next local action must save.
+        freshInstall.current = false
+      }
+
+      switch (result.status) {
+        case "ok":
+          if (origin === "external") {
+            externallyHydratedState.current = result.state
+          }
+          dispatch({ type: "HYDRATE", payload: result.state })
+          setStatus("ready")
+          return
+
+        case "recovered":
+          announceRecovery(result.backupKey, {
+            dropped: result.dropped,
+            repaired: result.repaired,
+          })
+          if (origin === "external") {
+            externallyHydratedState.current = result.state
+          }
+          dispatch({ type: "HYDRATE", payload: result.state })
+          setStatus("recovered")
+          return
+
+        case "empty":
+          if (origin === "initial") {
+            freshInstall.current = true
+          } else {
+            externallyHydratedState.current = INITIAL_STATE
+            dispatch({ type: "HYDRATE", payload: INITIAL_STATE })
+          }
+          setStatus("ready")
+          return
+
+        case "incompatible":
+          // A newer build wrote this payload. Hydrate empty without writing
+          // so the stored data survives until the user updates.
+          toast.error("Your data was written by a newer version", {
+            description:
+              "This version can't read it, so nothing is shown. Update the app to see your data.",
+          })
+          if (origin === "external") {
+            externallyHydratedState.current = INITIAL_STATE
+            dispatch({ type: "HYDRATE", payload: INITIAL_STATE })
+          }
+          setStatus("incompatible")
+          return
+
+        case "unavailable":
+          // Storage could not be reached. On a cold start the empty state is
+          // already in place; on an external write the current data stays on
+          // screen. Writes are off either way, so the session is memory-only.
+          toast.error("Storage is unavailable", {
+            description: "Changes will not be saved during this session.",
+          })
+          setStatus("unavailable")
+          return
+      }
+
+      // Unreachable: every load result variant returns above. A new variant
+      // makes this fail to compile rather than silently hydrating nothing.
+      assertNever(result)
+    },
+    [],
+  )
+
   useEffect(() => {
-    const result = storage.loadState()
+    applyLoadResult(storage.loadState(), "initial")
 
-    switch (result.status) {
-      case "ok":
-        dispatch({ type: "HYDRATE", payload: result.state })
-        setStatus("ready")
-        return
+    // Adopt writes made by another tab through the same pipeline as a cold
+    // start. A frozen or bfcache-restored tab can miss the event, so a
+    // re-read on return catches anything that arrived while hidden.
+    const unsubscribe = storage.subscribe((result) => {
+      applyLoadResult(result, "external")
+    })
 
-      case "recovered":
-        announceRecovery(result.backupKey, {
-          dropped: result.dropped,
-          repaired: result.repaired,
-        })
-        dispatch({ type: "HYDRATE", payload: result.state })
-        setStatus("recovered")
-        return
-
-      case "empty":
-        freshInstall.current = true
-        setStatus("ready")
-        return
-
-      case "incompatible":
-        // A newer build wrote this payload. Hydrate empty without writing so
-        // the stored data survives until the user updates.
-        toast.error("Your data was written by a newer version", {
-          description:
-            "This version can't read it, so nothing is shown. Update the app to see your data.",
-        })
-        setStatus("incompatible")
-        return
-
-      case "unavailable":
-        // Storage could not be reached. Serve the empty state (already the
-        // initial state), warn that nothing will be saved, and keep writes
-        // off so the session stays usable in memory only.
-        toast.error("Storage is unavailable", {
-          description: "Changes will not be saved during this session.",
-        })
-        setStatus("unavailable")
-        return
+    function handleResume() {
+      if (document.visibilityState === "hidden") return
+      storage.refresh()
     }
 
-    // Unreachable: every load result variant returns above. A new variant
-    // makes this fail to compile rather than silently hydrating nothing.
-    assertNever(result)
-  }, [])
+    document.addEventListener("visibilitychange", handleResume)
+    window.addEventListener("pageshow", handleResume)
+
+    return () => {
+      unsubscribe()
+      document.removeEventListener("visibilitychange", handleResume)
+      window.removeEventListener("pageshow", handleResume)
+    }
+  }, [applyLoadResult])
 
   // Persist after hydration: once for a loaded payload and on every change
   // after that. A recovered load also writes once here, which saves the
@@ -248,6 +308,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Nothing is written while loading, while storage is unavailable, or when
   // the stored data is incompatible with this build.
   useEffect(() => {
+    // An adoption from another tab renders but never writes back. The ref
+    // still matches only within this render, so a local action that follows
+    // saves normally.
+    if (externallyHydratedState.current === state) {
+      externallyHydratedState.current = null
+      if (status === "ready" || status === "recovered") return
+    }
+
     if (status !== "ready" && status !== "recovered") return
 
     if (freshInstall.current) {

@@ -42,6 +42,8 @@ type MemoryAdapter = StorageAdapter & {
   stored: (key?: string) => string | null
   store: (value: string | null, key?: string) => void
   keys: () => string[]
+  /** Fires the adapter's change listeners, as the browser's storage event would. */
+  emit: () => void
   setAttempts: string[]
   removeAttempts: string[]
 }
@@ -58,6 +60,7 @@ function createMemoryAdapter(
   if (options.initial !== undefined) values.set(STORAGE_KEY, options.initial)
   const setAttempts: string[] = []
   const removeAttempts: string[] = []
+  const listeners = new Set<() => void>()
 
   return {
     getItem(key) {
@@ -75,10 +78,17 @@ function createMemoryAdapter(
       values.delete(key)
     },
     keys: () => [...values.keys()],
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
     stored: (key = STORAGE_KEY) => values.get(key) ?? null,
     store: (value, key = STORAGE_KEY) => {
       if (value === null) values.delete(key)
       else values.set(key, value)
+    },
+    emit: () => {
+      for (const listener of listeners) listener()
     },
     setAttempts,
     removeAttempts,
@@ -556,6 +566,167 @@ describe("createAppStorage", () => {
       if (save.status !== "failed") throw new Error("expected a failed save")
       expect(save.reason).toBe("unavailable")
       expect(adapter.stored()).toBeNull()
+    })
+  })
+
+  describe("subscribe", () => {
+    it("emits a canonical load when the adapter reports a change", () => {
+      const adapter = createMemoryAdapter()
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+
+      const unsubscribe = storage.subscribe((result) => results.push(result))
+
+      adapter.store(JSON.stringify({ schemaVersion: 1, ...canonicalState }))
+      adapter.emit()
+
+      expect(results).toEqual([
+        { status: "ok", state: canonicalState, migratedFrom: null },
+      ])
+
+      unsubscribe()
+    })
+
+    it("runs external payloads through the same pipeline as a cold load", () => {
+      const adapter = createMemoryAdapter()
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+
+      adapter.store(JSON.stringify({ supplements: [], wellnessLogs: [] }))
+      adapter.emit()
+
+      const migrated = results[0]
+      expect(migrated.status).toBe("ok")
+      if (migrated.status !== "ok") throw new Error("expected an ok load")
+      expect(migrated.migratedFrom).toBe(0)
+
+      adapter.store("{ not json")
+      adapter.emit()
+
+      const recovered = results[1]
+      expect(recovered.status).toBe("recovered")
+      if (recovered.status !== "recovered") {
+        throw new Error("expected a recovered load")
+      }
+      expect(adapter.stored(recovered.backupKey)).toBe("{ not json")
+    })
+
+    it("emits incompatible and disables writes for a newer payload", () => {
+      const adapter = createMemoryAdapter()
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+
+      const raw = JSON.stringify({ schemaVersion: 2, ...canonicalState })
+      adapter.store(raw)
+      adapter.emit()
+
+      expect(results).toEqual([{ status: "incompatible", version: 2 }])
+      expect(storage.saveState(canonicalState).status).toBe("failed")
+      expect(adapter.stored()).toBe(raw)
+    })
+
+    it("stops emitting after the last subscriber leaves", () => {
+      const adapter = createMemoryAdapter()
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+
+      const unsubscribe = storage.subscribe((result) => results.push(result))
+      unsubscribe()
+
+      adapter.store(JSON.stringify({ schemaVersion: 1, ...canonicalState }))
+      adapter.emit()
+
+      expect(results).toEqual([])
+    })
+
+    it("serves every subscriber from one adapter subscription", () => {
+      const adapter = createMemoryAdapter()
+      let registrations = 0
+      const subscribeToAdapter = adapter.subscribe
+      if (!subscribeToAdapter) throw new Error("expected an adapter subscription")
+      adapter.subscribe = (listener) => {
+        registrations += 1
+        return subscribeToAdapter(listener)
+      }
+
+      const storage = createAppStorage(adapter)
+      const first: LoadStateResult[] = []
+      const second: LoadStateResult[] = []
+      storage.subscribe((result) => first.push(result))
+      storage.subscribe((result) => second.push(result))
+
+      adapter.store(JSON.stringify({ schemaVersion: 1, ...canonicalState }))
+      adapter.emit()
+
+      expect(registrations).toBe(1)
+      expect(first).toHaveLength(1)
+      expect(second).toHaveLength(1)
+    })
+  })
+
+  describe("refresh", () => {
+    it("notifies only when the stored payload changed since the last load", () => {
+      const adapter = createMemoryAdapter({
+        initial: JSON.stringify({ schemaVersion: 1, ...canonicalState }),
+      })
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+
+      expect(storage.loadState().status).toBe("ok")
+
+      storage.refresh()
+      expect(results).toEqual([])
+
+      const nextState: AppState = { ...canonicalState, wellnessLogs: [] }
+      adapter.store(JSON.stringify({ schemaVersion: 1, ...nextState }))
+      storage.refresh()
+
+      expect(results).toEqual([
+        { status: "ok", state: nextState, migratedFrom: null },
+      ])
+
+      storage.refresh()
+      expect(results).toHaveLength(1)
+    })
+
+    it("treats a save as the last seen payload", () => {
+      const adapter = createMemoryAdapter()
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+
+      expect(storage.saveState(canonicalState)).toEqual({ status: "saved" })
+
+      storage.refresh()
+      expect(results).toEqual([])
+    })
+
+    it("treats a cleared store as a change", () => {
+      const adapter = createMemoryAdapter({
+        initial: JSON.stringify({ schemaVersion: 1, ...canonicalState }),
+      })
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+      storage.loadState()
+
+      adapter.store(null)
+      storage.refresh()
+
+      expect(results).toEqual([{ status: "empty" }])
+    })
+
+    it("stays quiet when storage itself is unreachable", () => {
+      const adapter = createMemoryAdapter({ getError: new Error("blocked") })
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+
+      expect(() => storage.refresh()).not.toThrow()
+      expect(results).toEqual([])
     })
   })
 

@@ -27,6 +27,11 @@ export type StorageAdapter = {
   setItem(key: string, value: string): void
   removeItem(key: string): void
   keys(): string[]
+  /**
+   * Reports writes made by another tab. The browser's `storage` event is the
+   * only source; adapters that cannot observe other tabs omit it.
+   */
+  subscribe?: (listener: () => void) => () => void
 }
 
 /**
@@ -72,6 +77,14 @@ export type RecoveryCounts = {
 export type AppStorage = {
   loadState: () => LoadStateResult
   saveState: (state: AppState) => SaveStateResult
+  /** Notifies when the stored payload changes under this tab. */
+  subscribe: (listener: (result: LoadStateResult) => void) => () => void
+  /**
+   * Re-reads the stored payload and notifies subscribers only when it changed
+   * since the last load or save. Used when a tab becomes visible again, where
+   * a storage event may have been missed.
+   */
+  refresh: () => void
 }
 
 /** Serializes state as the flat stored payload: version beside the collections. */
@@ -168,97 +181,159 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
   // and unavailable storage keep them off.
   let writesDisabled = false
 
-  return {
-    loadState() {
-      let raw: string | null
+  // The raw payload last read or written. `undefined` means neither has
+  // happened yet. A visibility re-read compares against it so an unchanged
+  // store does not trigger an adoption.
+  let lastSeenRaw: string | null | undefined = undefined
+
+  const listeners = new Set<(result: LoadStateResult) => void>()
+  let unsubscribeAdapter: (() => void) | null = null
+
+  function notify(result: LoadStateResult): void {
+    for (const listener of listeners) listener(result)
+  }
+
+  /**
+   * Runs the whole load pipeline over a raw payload. External writes take the
+   * same path as a cold start, so an old client's payload is migrated and a
+   * damaged one is backed up before it can be adopted.
+   */
+  function loadFromRaw(raw: string | null): LoadStateResult {
+    lastSeenRaw = raw
+
+    if (raw === null || raw === "") {
+      writesDisabled = false
+      return { status: "empty" }
+    }
+
+    const storedPayload = raw
+
+    // Backs the raw payload up verbatim before any write can follow and
+    // returns the recovered result. A backup that cannot be written
+    // leaves the original untouched and makes the load unavailable, so
+    // no write follows it either.
+    const recover = (
+      state: AppState,
+      counts: RecoveryCounts,
+    ): LoadStateResult => {
       try {
-        raw = adapter.getItem(STORAGE_KEY)
+        const backupKey = backupPayload(adapter, storedPayload)
+        writesDisabled = false
+        return {
+          status: "recovered",
+          state,
+          backupKey,
+          dropped: counts.dropped,
+          repaired: counts.repaired,
+        }
       } catch (error) {
-        // Storage itself is unreachable (blocked, denied, or missing). The
-        // app keeps working in memory, but no write may follow this load.
         writesDisabled = true
         return { status: "unavailable", error }
       }
+    }
 
-      if (raw === null || raw === "") {
-        writesDisabled = false
-        return { status: "empty" }
-      }
-
-      const storedPayload = raw
-
-      // Backs the raw payload up verbatim before any write can follow and
-      // returns the recovered result. A backup that cannot be written
-      // leaves the original untouched and makes the load unavailable, so
-      // no write follows it either.
-      const recover = (
-        state: AppState,
-        counts: RecoveryCounts,
-      ): LoadStateResult => {
-        try {
-          const backupKey = backupPayload(adapter, storedPayload)
-          writesDisabled = false
-          return {
-            status: "recovered",
-            state,
-            backupKey,
-            dropped: counts.dropped,
-            repaired: counts.repaired,
-          }
-        } catch (error) {
-          writesDisabled = true
-          return { status: "unavailable", error }
-        }
-      }
-
-      try {
-        const parsed = parsePayload(storedPayload)
-        if (parsed.status === "unparseable") {
-          return recover(emptyState(), noCounts())
-        }
-
-        const detection = detectSchemaVersion(parsed.value)
-        if (detection.status !== "ok") {
-          return recover(emptyState(), noCounts())
-        }
-        if (detection.version > CURRENT_SCHEMA_VERSION) {
-          // Newer data is never migrated, downgraded, or backed up; writes are
-          // disabled so this load cannot overwrite the only copy.
-          writesDisabled = true
-          return { status: "incompatible", version: detection.version }
-        }
-
-        const migration = migrateStoredAppState(parsed.value)
-        if (migration.status !== "ok") {
-          // Defensive: version detection already accepted the payload, but a
-          // corrupt migration result still gets the recovery treatment.
-          return recover(emptyState(), noCounts())
-        }
-
-        if (
-          hasInvalidCollectionShape(parsed.value) ||
-          hasDroppedRecords(migration.dropped) ||
-          hasRepairedRecords(migration.repaired)
-        ) {
-          return recover(migration.state, {
-            dropped: migration.dropped,
-            repaired: migration.repaired,
-          })
-        }
-
-        writesDisabled = false
-        return {
-          status: "ok",
-          state: migration.state,
-          migratedFrom: migration.migratedFrom,
-        }
-      } catch {
-        // Anything unexpected while processing a non-empty payload still
-        // backs the raw value up before recovering, so nothing can be
-        // overwritten without a backup.
+    try {
+      const parsed = parsePayload(storedPayload)
+      if (parsed.status === "unparseable") {
         return recover(emptyState(), noCounts())
       }
-    },
+
+      const detection = detectSchemaVersion(parsed.value)
+      if (detection.status !== "ok") {
+        return recover(emptyState(), noCounts())
+      }
+      if (detection.version > CURRENT_SCHEMA_VERSION) {
+        // Newer data is never migrated, downgraded, or backed up; writes are
+        // disabled so this load cannot overwrite the only copy.
+        writesDisabled = true
+        return { status: "incompatible", version: detection.version }
+      }
+
+      const migration = migrateStoredAppState(parsed.value)
+      if (migration.status !== "ok") {
+        // Defensive: version detection already accepted the payload, but a
+        // corrupt migration result still gets the recovery treatment.
+        return recover(emptyState(), noCounts())
+      }
+
+      if (
+        hasInvalidCollectionShape(parsed.value) ||
+        hasDroppedRecords(migration.dropped) ||
+        hasRepairedRecords(migration.repaired)
+      ) {
+        return recover(migration.state, {
+          dropped: migration.dropped,
+          repaired: migration.repaired,
+        })
+      }
+
+      writesDisabled = false
+      return {
+        status: "ok",
+        state: migration.state,
+        migratedFrom: migration.migratedFrom,
+      }
+    } catch {
+      // Anything unexpected while processing a non-empty payload still
+      // backs the raw value up before recovering, so nothing can be
+      // overwritten without a backup.
+      return recover(emptyState(), noCounts())
+    }
+  }
+
+  function loadState(): LoadStateResult {
+    let raw: string | null
+    try {
+      raw = adapter.getItem(STORAGE_KEY)
+    } catch (error) {
+      // Storage itself is unreachable (blocked, denied, or missing). The
+      // app keeps working in memory, but no write may follow this load.
+      writesDisabled = true
+      return { status: "unavailable", error }
+    }
+
+    return loadFromRaw(raw)
+  }
+
+  /**
+   * Re-reads the raw payload after the tab becomes visible. A read failure is
+   * left to the save path or the next storage event to report; missing a
+   * re-read is not itself a reason to toast.
+   */
+  function refresh(): void {
+    let raw: string | null
+    try {
+      raw = adapter.getItem(STORAGE_KEY)
+    } catch {
+      return
+    }
+
+    if (raw === lastSeenRaw) return
+    notify(loadFromRaw(raw))
+  }
+
+  function subscribe(
+    listener: (result: LoadStateResult) => void,
+  ): () => void {
+    listeners.add(listener)
+
+    // One adapter subscription serves every listener, and it is torn down
+    // when the last one leaves.
+    if (!unsubscribeAdapter && adapter.subscribe) {
+      unsubscribeAdapter = adapter.subscribe(() => notify(loadState()))
+    }
+
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0 && unsubscribeAdapter) {
+        unsubscribeAdapter()
+        unsubscribeAdapter = null
+      }
+    }
+  }
+
+  return {
+    loadState,
 
     saveState(state) {
       if (writesDisabled) {
@@ -270,12 +345,17 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
       }
 
       try {
-        adapter.setItem(STORAGE_KEY, serializeState(state))
+        const serialized = serializeState(state)
+        adapter.setItem(STORAGE_KEY, serialized)
+        lastSeenRaw = serialized
         return { status: "saved" }
       } catch (error) {
         return { status: "failed", reason: classifySaveError(error), error }
       }
     },
+
+    subscribe,
+    refresh,
   }
 }
 
@@ -309,5 +389,24 @@ export const localStorageAdapter: StorageAdapter = {
       if (key !== null) keys.push(key)
     }
     return keys
+  },
+  subscribe(listener) {
+    if (typeof window === "undefined") return () => {}
+
+    function onStorage(event: StorageEvent) {
+      // Ignore writes to other keys (including recovery backups) and writes
+      // from a different storage area. A null key is localStorage.clear().
+      if (
+        event.storageArea !== null &&
+        event.storageArea !== window.localStorage
+      ) {
+        return
+      }
+      if (event.key !== STORAGE_KEY && event.key !== null) return
+      listener()
+    }
+
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
   },
 }
