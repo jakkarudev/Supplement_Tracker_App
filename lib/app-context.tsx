@@ -17,6 +17,7 @@ import { nanoid } from "@/lib/nanoid"
 import { scheduleNativeSupplementReminders } from "@/lib/reminders"
 import { dosageInventoryAmount } from "@/lib/dosage"
 import { migrateStoredAppState } from "@/lib/storage-migration"
+import { summarizeAdherence } from "@/lib/adherence"
 import {
   addDays,
   dayRegimen,
@@ -228,21 +229,9 @@ export function useAdherenceStats() {
       return Math.round((summary.taken / summary.total) * 100)
     })
 
-    const scheduledDailyRates = dailyAdherence.filter((v): v is number => v !== null)
-    const adherenceRate =
-      scheduledDailyRates.length > 0
-        ? Math.round(scheduledDailyRates.reduce((a, b) => a + b, 0) / scheduledDailyRates.length)
-        : 0
-
-    // Streak: consecutive 100% scheduled days walking backwards from yesterday (index 5)
-    let streak = 0
-    for (let i = 5; i >= 0; i--) {
-      if (dailyAdherence[i] === 100) streak++
-      else if (dailyAdherence[i] !== null) break
-      // null (no schedule) days don't break or extend streak
-    }
-    // Also count today if fully completed
-    if (dailyAdherence[6] === 100) streak++
+    // Completed days only: a partial today is excluded from the headline rate
+    // and neither helps nor breaks the streak, but it stays in the chart data.
+    const { adherenceRate, streak } = summarizeAdherence(dailyAdherence)
 
     const chartData = days.map((date, i) => {
       const wlog = wellnessLogs.find((w) => w.date === date)
