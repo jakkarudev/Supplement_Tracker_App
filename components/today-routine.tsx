@@ -5,11 +5,18 @@ import { BedDouble, Moon, Pill, Sunrise, Sun, Sunset } from "lucide-react"
 import { WeekStrip } from "@/components/week-strip"
 import { StatusBadge } from "@/components/status-badge"
 import { SlideToConfirm } from "@/components/slide-to-confirm"
-import { useAppState, useAppDispatch, todayString, nanoid } from "@/lib/app-context"
-import type { DoseLog, DoseStatus } from "@/lib/supplements-data"
-import { formatTimeForDisplay, periodFromTime, type Period } from "@/lib/time"
+import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
+import type { DoseStatus } from "@/lib/supplements-data"
+import {
+  dayRegimen,
+  formatCalendarDate,
+  formatTimeForDisplay,
+  today,
+  type CalendarDate,
+  type Period,
+  type ScheduledDose,
+} from "@/lib/day-regimen"
 import { cn } from "@/lib/utils"
-import { isSupplementScheduledOnDate } from "@/lib/supplement-schedule"
 
 const periodMeta: Record<Period, { Icon: typeof Sun; label: string }> = {
   Morning: { Icon: Sunrise, label: "Morning" },
@@ -18,39 +25,20 @@ const periodMeta: Record<Period, { Icon: typeof Sun; label: string }> = {
   Night: { Icon: BedDouble, label: "Night" },
 }
 
-type ScheduledDose = {
-  key: string
-  supplementId: string
-  time: string
-  period: Period
-  log: DoseLog | null
+type TodayRoutineProps = {
+  date?: CalendarDate
 }
 
-export function TodayRoutine() {
+export function TodayRoutine({ date }: TodayRoutineProps = {}) {
   const { supplements, doseLogs } = useAppState()
   const dispatch = useAppDispatch()
-  const today = todayString()
+  const selectedDate = date ?? today()
 
-  const doses = useMemo<ScheduledDose[]>(() => {
-    const result: ScheduledDose[] = []
-    for (const s of supplements) {
-      if (!isSupplementScheduledOnDate(s, today)) continue
-      for (const time of s.times) {
-        const existing =
-          doseLogs.find(
-            (l) => l.supplementId === s.id && l.date === today && l.time === time,
-          ) ?? null
-        result.push({
-          key: `${s.id}-${today}-${time}`,
-          supplementId: s.id,
-          time,
-          period: periodFromTime(time),
-          log: existing,
-        })
-      }
-    }
-    return result
-  }, [supplements, doseLogs, today])
+  const regimen = useMemo(
+    () => dayRegimen({ supplements, doseLogs }, selectedDate),
+    [supplements, doseLogs, selectedDate],
+  )
+  const doses = regimen.doses
 
   const grouped = useMemo(() => {
     const groups = new Map<string, ScheduledDose[]>()
@@ -64,16 +52,17 @@ export function TodayRoutine() {
     )
   }, [doses])
 
-  const takenCount = doses.filter((d) => d.log?.status === "taken").length
-  const pct = doses.length === 0 ? 0 : Math.round((takenCount / doses.length) * 100)
+  const takenCount = regimen.summary.taken
+  const totalCount = regimen.summary.total
+  const pct = totalCount === 0 ? 0 : Math.round((takenCount / totalCount) * 100)
 
   function logDose(item: ScheduledDose, status: DoseStatus) {
     dispatch({
       type: "LOG_DOSE",
       payload: {
         id: item.log?.id ?? nanoid(),
-        supplementId: item.supplementId,
-        date: today,
+        supplementId: item.supplement.id,
+        date: item.date,
         time: item.time,
         status,
       },
@@ -89,13 +78,13 @@ export function TodayRoutine() {
             <p className="text-sm font-medium text-muted-foreground">Today&apos;s progress</p>
             <p className="mt-1 text-3xl font-semibold tracking-tight">
               {takenCount}
-              <span className="text-muted-foreground">/{doses.length}</span>
+              <span className="text-muted-foreground">/{totalCount}</span>
               <span className="ml-2 text-base font-medium text-muted-foreground">logged</span>
             </p>
           </div>
           <div className="text-right">
             <p className="text-sm font-medium text-muted-foreground">
-              {new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" })}
+              {formatCalendarDate(selectedDate)}
             </p>
             <p className="text-sm font-semibold text-primary">{pct}% complete</p>
           </div>
@@ -136,23 +125,18 @@ export function TodayRoutine() {
                   </div>
                 </div>
                 <div className="ml-3 space-y-3 border-l border-dashed border-border pl-4 sm:ml-[1.1rem] sm:pl-6">
-                  {items.map((item) => {
-                    const supp = supplements.find((s) => s.id === item.supplementId)
-                    if (!supp) return null
-                    const status = item.log?.status ?? "pending"
-                    return (
-                      <DoseCard
-                        key={item.key}
-                        name={supp.name}
-                        brand={supp.brand}
-                        potency={supp.potency}
-                        dosage={supp.dosage}
-                        status={status}
-                        onConfirm={() => logDose(item, "taken")}
-                        onSnooze={() => logDose(item, "snoozed")}
-                      />
-                    )
-                  })}
+                  {items.map((item) => (
+                    <DoseCard
+                      key={item.key}
+                      name={item.supplement.name}
+                      brand={item.supplement.brand}
+                      potency={item.supplement.potency}
+                      dosage={item.supplement.dosage}
+                      status={item.status}
+                      onConfirm={() => logDose(item, "taken")}
+                      onSnooze={() => logDose(item, "snoozed")}
+                    />
+                  ))}
                 </div>
               </section>
             )
