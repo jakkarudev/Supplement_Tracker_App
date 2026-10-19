@@ -8,6 +8,7 @@ import { TodayRoutine } from "@/components/today-routine"
 import { SupplementForm } from "@/components/supplement-form"
 import { BiomarkerDashboard } from "@/components/biomarker-dashboard"
 import { InventoryHub } from "@/components/inventory-hub"
+import { today, type CalendarDate } from "@/lib/day-regimen"
 import { cn } from "@/lib/utils"
 
 type TabId = "today" | "add" | "dashboard" | "inventory"
@@ -21,6 +22,8 @@ const TABS: { id: TabId; label: string; short: string; icon: typeof CalendarChec
 
 export default function Page() {
   const [tab, setTab] = useState<TabId>("today")
+  // Ephemeral browsing state: survives tab switches but is never persisted.
+  const [selectedDate, setSelectedDate] = useState<CalendarDate>(today)
   const [editingId, setEditingId] = useState<string | null>(null)
   const headerRef = useRef<HTMLElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -114,7 +117,9 @@ export default function Page() {
 
         {/* Content */}
         <div ref={contentRef} className="scroll-mt-app-header flex-1 pt-1 sm:pt-0">
-          {tab === "today" && <TodayRoutine />}
+          {tab === "today" && (
+            <TodayRoutine date={selectedDate} onSelectDate={setSelectedDate} />
+          )}
           {tab === "add" && (
             <SupplementForm
               editingId={editingId}
