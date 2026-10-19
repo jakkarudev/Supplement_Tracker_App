@@ -1,11 +1,11 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Boxes, Clock, NotebookPen, Pill, Plus, Save, X } from "lucide-react"
+import { Boxes, Clock, Link, NotebookPen, Pill, Plus, Save, X } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
@@ -29,6 +29,14 @@ import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
+import { today } from "@/lib/day-regimen"
+import {
+  SOLID_DOSAGE_OPTIONS,
+  dosageUnitForForm,
+  formatDosage,
+  isSolidForm,
+  parseDosageValueForForm,
+} from "@/lib/dosage"
 
 const WEEK = [
   { label: "Sun", value: 0 },
@@ -45,11 +53,30 @@ const schema = z.object({
   brand: z.string().optional(),
   potency: z.string().optional(),
   form: z.enum(["Capsule", "Tablet", "Liquid", "Powder"]),
-  dosage: z.string().optional(),
+  dosage: z.string().min(1, "Dosage is required"),
   notes: z.string().optional(),
+  startedOn: z.string().min(1, "Start date is required"),
+  durationMode: z.enum(["ongoing", "limited"]).default("ongoing"),
+  durationDays: z.coerce.number().optional(),
+  cycleEnabled: z.boolean().default(false),
+  cycleActiveDays: z.coerce.number().optional(),
+  cycleBreakDays: z.coerce.number().optional(),
   days: z.array(z.number()).min(1, "Select at least one day"),
   totalCount: z.coerce.number().min(0).default(60),
   currentCount: z.coerce.number().min(0).default(60),
+  purchaseUrl: z
+    .string()
+    .trim()
+    .optional()
+    .refine((value) => {
+      if (!value) return true
+      try {
+        const url = new URL(value)
+        return url.protocol === "http:" || url.protocol === "https:"
+      } catch {
+        return false
+      }
+    }, "Enter a valid http or https URL"),
   restockReminder: z.boolean().default(true),
   restockThreshold: z.coerce.number().min(1).default(10),
 }).refine((v) => v.currentCount <= v.totalCount, {
@@ -58,31 +85,24 @@ const schema = z.object({
 }).refine((v) => !v.restockReminder || v.restockThreshold <= v.totalCount, {
   message: "Threshold cannot exceed total count",
   path: ["restockThreshold"],
+}).refine((v) => !isSolidForm(v.form) || SOLID_DOSAGE_OPTIONS.includes(v.dosage), {
+  message: "Choose a dosage",
+  path: ["dosage"],
+}).refine((v) => isSolidForm(v.form) || Number(v.dosage) > 0, {
+  message: "Enter an amount greater than 0",
+  path: ["dosage"],
+}).refine((v) => v.durationMode === "ongoing" || Number(v.durationDays) > 0, {
+  message: "Enter how many days to take it",
+  path: ["durationDays"],
+}).refine((v) => !v.cycleEnabled || Number(v.cycleActiveDays) > 0, {
+  message: "Enter active days",
+  path: ["cycleActiveDays"],
+}).refine((v) => !v.cycleEnabled || Number(v.cycleBreakDays) > 0, {
+  message: "Enter break days",
+  path: ["cycleBreakDays"],
 })
 
 type FormValues = z.infer<typeof schema>
-
-/** Convert "08:00 AM" → "08:00" for <input type="time"> */
-function toInputTime(display: string): string {
-  const parts = display.split(" ")
-  if (parts.length === 1) return display // already 24h
-  const [rawTime, meridiem] = parts
-  const [hourStr, min] = rawTime.split(":")
-  let hour = parseInt(hourStr, 10)
-  if (meridiem === "PM" && hour !== 12) hour += 12
-  if (meridiem === "AM" && hour === 12) hour = 0
-  return `${String(hour).padStart(2, "0")}:${min}`
-}
-
-/** Convert "08:00" (24h input) → "08:00 AM" */
-function toDisplayTime(input: string): string {
-  const [hourStr, min] = input.split(":")
-  let hour = parseInt(hourStr, 10)
-  const meridiem = hour >= 12 ? "PM" : "AM"
-  if (hour > 12) hour -= 12
-  if (hour === 0) hour = 12
-  return `${String(hour).padStart(2, "0")}:${min} ${meridiem}`
-}
 
 function SectionCard({
   icon: Icon,
@@ -128,9 +148,16 @@ export function SupplementForm({ editingId, onDone }: Props) {
     form: "Capsule",
     dosage: "",
     notes: "",
+    startedOn: today(),
+    durationMode: "ongoing",
+    durationDays: undefined,
+    cycleEnabled: false,
+    cycleActiveDays: undefined,
+    cycleBreakDays: undefined,
     days: [1, 2, 3, 4, 5],
     totalCount: 60,
     currentCount: 60,
+    purchaseUrl: "",
     restockReminder: true,
     restockThreshold: 10,
   }
@@ -150,15 +177,22 @@ export function SupplementForm({ editingId, onDone }: Props) {
         brand: editing.brand ?? "",
         potency: editing.potency ?? "",
         form: editing.form,
-        dosage: editing.dosage ?? "",
+        dosage: parseDosageValueForForm(editing.form, editing.dosage ?? ""),
         notes: editing.notes ?? "",
+        startedOn: editing.startedOn,
+        durationMode: editing.durationDays ? "limited" : "ongoing",
+        durationDays: editing.durationDays,
+        cycleEnabled: Boolean(editing.cycleActiveDays && editing.cycleBreakDays),
+        cycleActiveDays: editing.cycleActiveDays,
+        cycleBreakDays: editing.cycleBreakDays,
         days: editing.days,
         totalCount: editing.totalCount,
         currentCount: editing.currentCount,
+        purchaseUrl: editing.purchaseUrl ?? "",
         restockReminder: editing.restockReminder,
         restockThreshold: editing.restockThreshold,
       })
-      setTimeInputs(editing.times.map(toInputTime))
+      setTimeInputs(editing.times)
     } else {
       form.reset(defaultValues)
       setTimeInputs(["08:00"])
@@ -168,6 +202,23 @@ export function SupplementForm({ editingId, onDone }: Props) {
 
   const watchDays = form.watch("days")
   const watchRestock = form.watch("restockReminder")
+  const watchForm = form.watch("form")
+  const watchDurationMode = form.watch("durationMode")
+  const watchCycleEnabled = form.watch("cycleEnabled")
+  const previousFormRef = useRef<FormValues["form"] | null>(null)
+
+  const dosagePlaceholder = useMemo(() => {
+    if (watchForm === "Liquid") return "e.g. 10"
+    if (watchForm === "Powder") return "e.g. 5"
+    return "Choose amount"
+  }, [watchForm])
+
+  useEffect(() => {
+    if (previousFormRef.current && previousFormRef.current !== watchForm) {
+      form.setValue("dosage", "", { shouldValidate: true })
+    }
+    previousFormRef.current = watchForm
+  }, [watchForm, form])
 
   function toggleDay(value: number) {
     const current = form.getValues("days")
@@ -188,8 +239,13 @@ export function SupplementForm({ editingId, onDone }: Props) {
   }
 
   function onSubmit(values: FormValues) {
-    // Deduplicate times before saving
-    const times = [...new Set(timeInputs.filter(Boolean).map(toDisplayTime))]
+    // Deduplicate canonical times before saving
+    const times = [...new Set(timeInputs.filter(Boolean))]
+    const purchaseUrl = values.purchaseUrl?.trim() || undefined
+    const dosage = formatDosage(values.form, values.dosage)
+    const durationDays = values.durationMode === "limited" ? values.durationDays : undefined
+    const cycleActiveDays = values.cycleEnabled ? values.cycleActiveDays : undefined
+    const cycleBreakDays = values.cycleEnabled ? values.cycleBreakDays : undefined
     if (editing) {
       dispatch({
         type: "UPDATE_SUPPLEMENT",
@@ -199,12 +255,17 @@ export function SupplementForm({ editingId, onDone }: Props) {
           brand: values.brand ?? "",
           potency: values.potency ?? "",
           form: values.form,
-          dosage: values.dosage ?? "",
+          dosage,
           notes: values.notes ?? "",
+          startedOn: values.startedOn,
+          durationDays,
+          cycleActiveDays,
+          cycleBreakDays,
           days: values.days,
           times,
           totalCount: values.totalCount,
           currentCount: values.currentCount,
+          purchaseUrl,
           restockReminder: values.restockReminder,
           restockThreshold: values.restockThreshold,
         },
@@ -219,12 +280,17 @@ export function SupplementForm({ editingId, onDone }: Props) {
           brand: values.brand ?? "",
           potency: values.potency ?? "",
           form: values.form,
-          dosage: values.dosage ?? "",
+          dosage,
           notes: values.notes ?? "",
+          startedOn: values.startedOn,
+          durationDays,
+          cycleActiveDays,
+          cycleBreakDays,
           days: values.days,
           times,
           totalCount: values.totalCount,
           currentCount: values.currentCount,
+          purchaseUrl,
           restockReminder: values.restockReminder,
           restockThreshold: values.restockThreshold,
         },
@@ -309,8 +375,38 @@ export function SupplementForm({ editingId, onDone }: Props) {
                 <FormItem className="sm:col-span-2">
                   <FormLabel>Dosage</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g. 1 capsule, 2 softgels" {...field} />
+                    {isSolidForm(watchForm) ? (
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder={dosagePlaceholder} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {SOLID_DOSAGE_OPTIONS.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          inputMode="decimal"
+                          placeholder={dosagePlaceholder}
+                          {...field}
+                        />
+                        <span className="w-10 text-sm text-muted-foreground">
+                          {dosageUnitForForm(watchForm)}
+                        </span>
+                      </div>
+                    )}
                   </FormControl>
+                  <FormMessage />
                 </FormItem>
               )}
             />
@@ -412,6 +508,124 @@ export function SupplementForm({ editingId, onDone }: Props) {
         </SectionCard>
 
         <SectionCard
+          icon={Clock}
+          title="Regimen timeline"
+          description="Control when this supplement starts, runs, and pauses."
+        >
+          <div className="space-y-5">
+            <FormField
+              control={form.control}
+              name="startedOn"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Started on</FormLabel>
+                  <FormControl>
+                    <Input type="date" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="durationMode"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Course length</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="ongoing">Ongoing</SelectItem>
+                      <SelectItem value="limited">For a set number of days</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {watchDurationMode === "limited" && (
+              <FormField
+                control={form.control}
+                name="durationDays"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Take for</FormLabel>
+                    <FormControl>
+                      <div className="flex items-center gap-2">
+                        <Input type="number" min={1} inputMode="numeric" {...field} />
+                        <span className="text-sm text-muted-foreground">days</span>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            <FormField
+              control={form.control}
+              name="cycleEnabled"
+              render={({ field }) => (
+                <FormItem>
+                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border bg-card/50 p-4">
+                    <div>
+                      <p className="text-sm font-medium">Take scheduled breaks</p>
+                      <p className="text-xs text-muted-foreground">
+                        Pause this supplement after active cycles.
+                      </p>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        aria-label="Take scheduled breaks"
+                      />
+                    </FormControl>
+                  </div>
+                </FormItem>
+              )}
+            />
+
+            {watchCycleEnabled && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="cycleActiveDays"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Take for</FormLabel>
+                      <FormControl>
+                        <Input type="number" min={1} inputMode="numeric" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="cycleBreakDays"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Break for</FormLabel>
+                      <FormControl>
+                        <Input type="number" min={1} inputMode="numeric" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+          </div>
+        </SectionCard>
+
+        <SectionCard
           icon={Boxes}
           title="Smart inventory"
           description="Track your bottle and get restock reminders."
@@ -443,6 +657,28 @@ export function SupplementForm({ editingId, onDone }: Props) {
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name="purchaseUrl"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Purchase link</FormLabel>
+                  <FormControl>
+                    <div className="relative">
+                      <Link className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        type="url"
+                        inputMode="url"
+                        placeholder="https://..."
+                        className="pl-9"
+                        {...field}
+                      />
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name="restockReminder"

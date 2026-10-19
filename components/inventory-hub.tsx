@@ -148,7 +148,7 @@ function InventoryRow({
                     <DrawerHeader>
                       <DrawerTitle>Remove {supplement.name}?</DrawerTitle>
                       <DrawerDescription>
-                        This will permanently delete this supplement and all its intake history.
+                        This will permanently delete this supplement and all its dose history.
                       </DrawerDescription>
                     </DrawerHeader>
                     <DrawerFooter>
@@ -181,7 +181,7 @@ function InventoryRow({
                     <AlertDialogHeader>
                       <AlertDialogTitle>Remove {supplement.name}?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This will permanently delete this supplement and all its intake history.
+                        This will permanently delete this supplement and all its dose history.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -220,10 +220,24 @@ function InventoryRow({
         </div>
       </div>
 
-      {isLow && (
+      {(isLow || supplement.purchaseUrl) && (
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-          <RestockButton vendor="Amazon" name={supplement.name} primary />
-          <RestockButton vendor="iHerb" name={supplement.name} />
+          {supplement.purchaseUrl ? (
+            <RestockButton
+              name={supplement.name}
+              href={supplement.purchaseUrl}
+              primary={isLow}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => onEdit?.(supplement.id)}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card px-4 py-3 text-sm font-semibold text-muted-foreground transition-all hover:border-primary/40 hover:text-primary active:scale-[0.98]"
+            >
+              <ShoppingCart className="h-4 w-4" />
+              Add purchase link
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -231,20 +245,22 @@ function InventoryRow({
 }
 
 function RestockButton({
-  vendor,
   name,
+  href,
   primary,
 }: {
-  vendor: string
   name: string
+  href: string
   primary?: boolean
 }) {
   return (
-    <button
-      type="button"
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
       onClick={() =>
-        toast.success(`Opening ${vendor}`, {
-          description: `Restocking ${name} via affiliate link.`,
+        toast.success("Opening purchase link", {
+          description: `Restocking ${name}.`,
         })
       }
       className={cn(
@@ -255,8 +271,8 @@ function RestockButton({
       )}
     >
       <ShoppingCart className="h-4 w-4" />
-      Restock on {vendor}
+      Restock
       <ExternalLink className="h-3.5 w-3.5 opacity-70" />
-    </button>
+    </a>
   )
 }

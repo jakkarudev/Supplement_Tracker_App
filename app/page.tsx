@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { CalendarCheck, Plus, BarChart3, Boxes, Leaf } from "lucide-react"
 import { Toaster } from "@/components/ui/sonner"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -8,6 +8,7 @@ import { TodayRoutine } from "@/components/today-routine"
 import { SupplementForm } from "@/components/supplement-form"
 import { BiomarkerDashboard } from "@/components/biomarker-dashboard"
 import { InventoryHub } from "@/components/inventory-hub"
+import { today, type CalendarDate } from "@/lib/day-regimen"
 import { cn } from "@/lib/utils"
 
 type TabId = "today" | "add" | "dashboard" | "inventory"
@@ -21,17 +22,46 @@ const TABS: { id: TabId; label: string; short: string; icon: typeof CalendarChec
 
 export default function Page() {
   const [tab, setTab] = useState<TabId>("today")
+  // Ephemeral browsing state: survives tab switches but is never persisted.
+  const [selectedDate, setSelectedDate] = useState<CalendarDate>(today)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const headerRef = useRef<HTMLElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+
+  const scrollContentBelowHeader = useCallback(() => {
+    const contentEl = contentRef.current
+    const headerEl = headerRef.current
+    if (!contentEl || !headerEl) return
+
+    const gap = 8
+    const headerRect = headerEl.getBoundingClientRect()
+    const contentRect = contentEl.getBoundingClientRect()
+
+    // Align content top to exactly below the sticky header's visible bottom.
+    const delta = contentRect.top - (headerRect.bottom + gap)
+    if (Math.abs(delta) < 1) return
+    window.scrollTo({ top: Math.max(0, window.scrollY + delta), behavior: "auto" })
+  }, [])
+
+  const setTabAndAlign = useCallback((id: TabId) => {
+    setTab(id)
+    // On Android WebView, layout can settle a frame later after tab switch.
+    requestAnimationFrame(() => {
+      scrollContentBelowHeader()
+      requestAnimationFrame(() => {
+        scrollContentBelowHeader()
+      })
+    })
+  }, [scrollContentBelowHeader])
 
   function handleTabChange(id: TabId) {
     if (id !== "add") setEditingId(null)
-    setTab(id)
-    window.scrollTo({ top: 0, behavior: "instant" })
+    setTabAndAlign(id)
   }
 
   function handleEdit(id: string) {
     setEditingId(id)
-    setTab("add")
+    setTabAndAlign("add")
   }
 
   return (
@@ -42,9 +72,12 @@ export default function Page() {
         <div className="absolute top-1/3 -left-24 h-72 w-72 rounded-full bg-accent/10 blur-3xl" />
       </div>
 
-      <div className="relative mx-auto flex min-h-screen max-w-3xl flex-col px-3 pb-mobile-nav pt-3 sm:px-6 sm:pb-28 sm:pt-5">
+      <div className="pt-app-safe-top relative mx-auto flex min-h-screen max-w-3xl flex-col px-3 pb-mobile-nav sm:px-6 sm:pb-28">
         {/* Header */}
-        <header className="glass sticky top-[max(0.5rem,env(safe-area-inset-top))] z-30 mb-4 flex items-center justify-between rounded-2xl px-3 py-2.5 sm:mb-6 sm:px-4 sm:py-3">
+        <header
+          ref={headerRef}
+          className="glass sticky top-[max(0.5rem,var(--app-safe-top))] z-30 mb-4 flex items-center justify-between rounded-2xl px-3 py-2.5 sm:mb-6 sm:px-4 sm:py-3"
+        >
           <div className="flex items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
               <Leaf className="h-5 w-5" />
@@ -83,14 +116,16 @@ export default function Page() {
         </nav>
 
         {/* Content */}
-        <div className="flex-1">
-          {tab === "today" && <TodayRoutine />}
+        <div ref={contentRef} className="scroll-mt-app-header flex-1 pt-1 sm:pt-0">
+          {tab === "today" && (
+            <TodayRoutine date={selectedDate} onSelectDate={setSelectedDate} />
+          )}
           {tab === "add" && (
             <SupplementForm
               editingId={editingId}
               onDone={() => {
                 setEditingId(null)
-                setTab("today")
+                setTabAndAlign("today")
               }}
             />
           )}
