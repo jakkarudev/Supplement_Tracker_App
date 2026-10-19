@@ -271,7 +271,7 @@ describe("createAppStorage", () => {
       ])
     })
 
-    it("fails safely when the backup cannot be written", () => {
+    it("reports unavailable and never writes when the backup cannot be written", () => {
       const backupError = new Error("backup write failed")
       const payloads = [
         "{ not json",
@@ -288,7 +288,7 @@ describe("createAppStorage", () => {
         const storage = createAppStorage(adapter)
 
         const load = storage.loadState()
-        expect(load).toEqual({ status: "failed", error: backupError })
+        expect(load).toEqual({ status: "unavailable", error: backupError })
         expect(adapter.stored()).toBe(raw)
         expect(adapter.setAttempts).toEqual([
           expect.stringMatching(BACKUP_KEY_PATTERN),
@@ -343,12 +343,19 @@ describe("createAppStorage", () => {
       expect(adapter.stored()).toBe(raw)
     })
 
-    it("reports a failed load instead of throwing when the adapter cannot read", () => {
-      const error = new Error("storage is not available")
+    it("reports unavailable with the error when the adapter cannot read, and never writes", () => {
+      const error = new DOMException("Storage is blocked.", "SecurityError")
       const adapter = createMemoryAdapter({ getError: error })
       const storage = createAppStorage(adapter)
 
-      expect(storage.loadState()).toEqual({ status: "failed", error })
+      expect(storage.loadState()).toEqual({ status: "unavailable", error })
+      expect(adapter.stored()).toBeNull()
+
+      const save = storage.saveState(canonicalState)
+      expect(save.status).toBe("failed")
+      if (save.status !== "failed") throw new Error("expected a failed save")
+      expect(save.reason).toBe("unavailable")
+      expect(adapter.stored()).toBeNull()
     })
   })
 

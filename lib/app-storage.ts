@@ -29,14 +29,17 @@ export type StorageAdapter = {
 /**
  * The outcome of a load. `ok` carries the canonical state and the version it
  * was migrated from (null when it was already current); `empty` means nothing
- * usable was stored; `recovered` means the stored payload lost data and a
- * verbatim backup was written before the salvaged state is saved back;
- * `failed` carries the error that stopped the load. The spec splits `failed`
- * further into incompatible and unavailable as #24 and #25 land.
+ * usable was stored; `unavailable` means storage itself could not be reached,
+ * so the app must stay usable in memory and never write; `recovered` means the
+ * stored payload lost data and a verbatim backup was written before the
+ * salvaged state is saved back; `failed` carries the error that stopped the
+ * load for every other case. The typed newer-version result (#24) refines the
+ * remaining `failed` cases.
  */
 export type LoadStateResult =
   | { status: "ok"; state: AppState; migratedFrom: number | null }
   | { status: "empty" }
+  | { status: "unavailable"; error: unknown }
   | {
       status: "recovered"
       state: AppState
@@ -104,28 +107,17 @@ function pruneBackups(adapter: StorageAdapter): void {
 
 type ParsedPayload =
   | { status: "parsed"; value: unknown }
-  | {
-      status: "recovered"
-      state: AppState
-      backupKey: string
-      dropped: DroppedRecordCounts
-    }
+  | { status: "unparseable" }
 
 /**
- * Parses the raw payload. An unparseable payload is backed up verbatim and
- * recovered as empty state; a backup failure propagates so the caller can
- * stop the load without touching the original.
+ * Parses the raw payload without throwing. An unparseable payload is
+ * reported as such so the load can back it up before recovering.
  */
-function parsePayload(adapter: StorageAdapter, raw: string): ParsedPayload {
+function parsePayload(raw: string): ParsedPayload {
   try {
     return { status: "parsed", value: JSON.parse(raw) }
   } catch {
-    return {
-      status: "recovered",
-      state: emptyState(),
-      backupKey: backupPayload(adapter, raw),
-      dropped: noDrops(),
-    }
+    return { status: "unparseable" }
   }
 }
 
@@ -143,29 +135,50 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
 
   return {
     loadState() {
+      let raw: string | null
       try {
-        const raw = adapter.getItem(STORAGE_KEY)
+        raw = adapter.getItem(STORAGE_KEY)
+      } catch (error) {
+        // Storage itself is unreachable (blocked, denied, or missing). The
+        // app keeps working in memory, but no write may follow this load.
+        writesDisabled = true
+        return { status: "unavailable", error }
+      }
+
+      try {
         if (raw === null || raw === "") {
           writesDisabled = false
           return { status: "empty" }
         }
 
-        const parsed = parsePayload(adapter, raw)
-        if (parsed.status === "recovered") {
-          writesDisabled = false
-          return parsed
+        const storedPayload = raw
+
+        // Backs the raw payload up verbatim before any write can follow and
+        // returns the recovered result. A backup that cannot be written
+        // leaves the original untouched and makes the load unavailable, so
+        // no write follows it either.
+        const recover = (
+          state: AppState,
+          dropped: DroppedRecordCounts,
+        ): LoadStateResult => {
+          try {
+            const backupKey = backupPayload(adapter, storedPayload)
+            writesDisabled = false
+            return { status: "recovered", state, backupKey, dropped }
+          } catch (error) {
+            writesDisabled = true
+            return { status: "unavailable", error }
+          }
+        }
+
+        const parsed = parsePayload(storedPayload)
+        if (parsed.status === "unparseable") {
+          return recover(emptyState(), noDrops())
         }
 
         const detection = detectSchemaVersion(parsed.value)
         if (detection.status !== "ok") {
-          const backupKey = backupPayload(adapter, raw)
-          writesDisabled = false
-          return {
-            status: "recovered",
-            state: emptyState(),
-            backupKey,
-            dropped: noDrops(),
-          }
+          return recover(emptyState(), noDrops())
         }
         if (detection.version > CURRENT_SCHEMA_VERSION) {
           writesDisabled = true
@@ -187,14 +200,7 @@ export function createAppStorage(adapter: StorageAdapter): AppStorage {
         }
 
         if (hasDroppedRecords(migration.dropped)) {
-          const backupKey = backupPayload(adapter, raw)
-          writesDisabled = false
-          return {
-            status: "recovered",
-            state: migration.state,
-            backupKey,
-            dropped: migration.dropped,
-          }
+          return recover(migration.state, migration.dropped)
         }
 
         writesDisabled = false
