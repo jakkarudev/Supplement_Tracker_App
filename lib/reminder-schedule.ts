@@ -1,6 +1,6 @@
 import type { LocalNotificationSchema } from "@capacitor/local-notifications"
 import type { Supplement } from "./supplements-data"
-import { clockFromTime, today, upcomingScheduledDoses } from "./day-regimen"
+import { clockFromTime, doseKey, today, upcomingScheduledDoses } from "./day-regimen"
 
 export const REMINDER_CHANNEL_ID = "supplement-reminders"
 const REMINDER_HORIZON_DAYS = 30
@@ -10,7 +10,7 @@ export function notificationIdForReminder(
   date: string,
   time: string,
 ): number {
-  const key = `${supplementId}|${date}|${time}`
+  const key = doseKey(supplementId, date, time)
   let hash = 0x811c9dc5
 
   for (let i = 0; i < key.length; i++) {
@@ -34,12 +34,12 @@ export function buildSupplementReminderNotifications(
   return upcomingScheduledDoses(supplements, fromDate, horizonDays).map((scheduled) => {
     const { supplement, date, time } = scheduled
     const { hour, minute } = clockFromTime(time)
-    const dose = [supplement.dosage, supplement.potency].filter(Boolean).join(" · ")
+    const dosageLabel = [supplement.dosage, supplement.potency].filter(Boolean).join(" · ")
 
     return {
       id: notificationIdForReminder(supplement.id, date, time),
       title: `Time for ${supplement.name}`,
-      body: dose || "Log this supplement.",
+      body: dosageLabel || "Log this supplement.",
       channelId: REMINDER_CHANNEL_ID,
       schedule: {
         at: dateTimeFromLocalParts(date, hour, minute),

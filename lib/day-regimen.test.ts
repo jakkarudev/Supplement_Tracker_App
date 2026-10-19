@@ -4,8 +4,11 @@ import {
   addDays,
   dayOfWeek,
   dayRegimen,
+  doseKey,
   formatCalendarDate,
   formatTimeForDisplay,
+  isCalendarDate,
+  normalizeTimeList,
   normalizeTimeOfDay,
   periodFromTime,
   scheduledDoses,
@@ -72,6 +75,19 @@ describe("time vocabulary", () => {
     expect(periodFromTime("21:00")).toBe("Night")
     expect(periodFromTime("23:59")).toBe("Night")
   })
+
+  it("normalizes a time list, dropping invalid values and duplicate times in place", () => {
+    expect(
+      normalizeTimeList(["08:00 AM", "noon", "20:30", "08:00", "8:00 am", null, 42]),
+    ).toEqual(["08:00", "20:30"])
+  })
+
+  it("returns an empty time list for non-array values", () => {
+    expect(normalizeTimeList(undefined)).toEqual([])
+    expect(normalizeTimeList(null)).toEqual([])
+    expect(normalizeTimeList("08:00")).toEqual([])
+    expect(normalizeTimeList({ 0: "08:00" })).toEqual([])
+  })
 })
 
 describe("calendar vocabulary", () => {
@@ -128,6 +144,20 @@ describe("calendar vocabulary", () => {
     expect(dayOfWeek("2026-05-03")).toBe(0)
     expect(dayOfWeek("2026-05-04")).toBe(1)
     expect(dayOfWeek("2026-05-09")).toBe(6)
+  })
+
+  it("accepts only real local YYYY-MM-DD calendar dates", () => {
+    expect(isCalendarDate("2026-05-04")).toBe(true)
+    expect(isCalendarDate("2028-02-29")).toBe(true)
+    expect(isCalendarDate("2026-02-29")).toBe(false)
+    expect(isCalendarDate("2026-13-01")).toBe(false)
+    expect(isCalendarDate("2026-00-10")).toBe(false)
+    expect(isCalendarDate("2026-05-32")).toBe(false)
+    expect(isCalendarDate("2026-5-04")).toBe(false)
+    expect(isCalendarDate("2026-05-04T00:00:00")).toBe(false)
+    expect(isCalendarDate("")).toBe(false)
+    expect(isCalendarDate(null)).toBe(false)
+    expect(isCalendarDate(20260504)).toBe(false)
   })
 
   it("formats calendar dates for display", () => {
@@ -205,6 +235,10 @@ describe("scheduledDoses ordering and shape", () => {
       "08:00 second",
       "09:00 first",
     ])
+  })
+
+  it("builds a stable identity string from supplement, date, and time", () => {
+    expect(doseKey("magnesium", "2026-05-04", "20:30")).toBe("magnesium|2026-05-04|20:30")
   })
 
   it("carries a stable key, nested supplement, date, canonical time, and period", () => {

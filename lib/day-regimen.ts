@@ -25,8 +25,14 @@ export type DayRegimen = {
 
 const CANONICAL_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/
 const LEGACY_TIME = /^(\d{1,2}):([0-5]\d)\s*([AaPp][Mm])$/
+const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 
 const MILLISECONDS_PER_DAY = 86_400_000
+
+/** Builds the stable identity key for one supplement's dose on a date and time. */
+export function doseKey(supplementId: string, date: CalendarDate, time: string): string {
+  return `${supplementId}|${date}|${time}`
+}
 
 function daysBetween(start: CalendarDate, end: CalendarDate): number {
   const [startYear, startMonth, startDay] = start.split("-").map(Number)
@@ -54,13 +60,6 @@ function isSupplementScheduledOnDate(supplement: Supplement, date: CalendarDate)
   return isSupplementActiveOnDate(supplement, date) && supplement.days.includes(dayOfWeek(date))
 }
 
-function canonicalTimes(supplement: Supplement): string[] {
-  const normalized = supplement.times
-    .map(normalizeTimeOfDay)
-    .filter((time): time is string => time !== null)
-  return [...new Set(normalized)]
-}
-
 function localDateFromCalendarDate(date: CalendarDate): Date {
   const [year, month, day] = date.split("-").map(Number)
   return new Date(year, month - 1, day)
@@ -71,6 +70,23 @@ function calendarDateFromLocalDate(date: Date): CalendarDate {
   const month = String(date.getMonth() + 1).padStart(2, "0")
   const day = String(date.getDate()).padStart(2, "0")
   return `${year}-${month}-${day}`
+}
+
+/** Returns whether the value is a real local calendar date in "YYYY-MM-DD" form. */
+export function isCalendarDate(value: unknown): value is CalendarDate {
+  if (typeof value !== "string") return false
+  const match = CALENDAR_DATE.exec(value)
+  if (!match) return false
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(year, month - 1, day)
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  )
 }
 
 /** Returns today's local calendar date as "YYYY-MM-DD". */
@@ -116,10 +132,10 @@ export function scheduledDoses(
   for (const supplement of supplements) {
     if (!isSupplementScheduledOnDate(supplement, date)) continue
 
-    for (const time of canonicalTimes(supplement)) {
+    for (const time of normalizeTimeList(supplement.times)) {
       ordered.push({
         dose: {
-          key: `${supplement.id}|${date}|${time}`,
+          key: doseKey(supplement.id, date, time),
           supplement,
           date,
           time,
@@ -145,10 +161,7 @@ export function dayRegimen(
   const doses = scheduledDoses(supplements, date).map((dose) => {
     const log =
       doseLogs.find(
-        (candidate) =>
-          candidate.supplementId === dose.supplement.id &&
-          candidate.date === dose.date &&
-          candidate.time === dose.time,
+        (candidate) => doseKey(candidate.supplementId, candidate.date, candidate.time) === dose.key,
       ) ?? null
 
     return { ...dose, log, status: log?.status ?? "pending" }
@@ -201,6 +214,16 @@ export function normalizeTimeOfDay(value: unknown): string | null {
   const meridiem = legacy[3].toUpperCase()
   const hour = (hour12 % 12) + (meridiem === "PM" ? 12 : 0)
   return `${String(hour).padStart(2, "0")}:${minute}`
+}
+
+/** Normalizes a stored list of times to canonical "HH:mm", dropping invalid entries and duplicates. */
+export function normalizeTimeList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+
+  const times = value
+    .map(normalizeTimeOfDay)
+    .filter((time): time is string => time !== null)
+  return [...new Set(times)]
 }
 
 /** Formats a canonical "HH:mm" time as a zero-padded 12-hour display time. */
