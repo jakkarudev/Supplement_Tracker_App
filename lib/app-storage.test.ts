@@ -92,6 +92,7 @@ const EMPTY_STATE: AppState = {
 }
 
 const NO_DROPS = { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
+const NO_REPAIRS = { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
 
 const BACKUP_KEY_PATTERN = /^regimen-v1\.corrupt\.\d{4}-\d{2}-\d{2}T[\d:.]+Z$/
 
@@ -136,6 +137,7 @@ describe("createAppStorage", () => {
       const load = expectRecovered(storage.loadState())
       expect(load.state).toEqual(EMPTY_STATE)
       expect(load.dropped).toEqual(NO_DROPS)
+      expect(load.repaired).toEqual(NO_REPAIRS)
       expect(adapter.stored(load.backupKey)).toBe(raw)
       expect(adapter.stored()).toBe(raw)
       expect(adapter.setAttempts).toEqual([load.backupKey])
@@ -259,6 +261,7 @@ describe("createAppStorage", () => {
         doseLogs: 1,
         wellnessLogs: 2,
       })
+      expect(load.repaired).toEqual(NO_REPAIRS)
       expect(adapter.stored(load.backupKey)).toBe(raw)
       expect(adapter.setAttempts).toEqual([load.backupKey])
 
@@ -267,6 +270,132 @@ describe("createAppStorage", () => {
         schemaVersion: 1,
         ...canonicalState,
       })
+    })
+
+    it("recovers supplements dropped by strict validation with a backup", () => {
+      const orphanedLog = {
+        id: "log-gummy",
+        supplementId: "gummy",
+        date: "2026-05-01",
+        time: "20:00",
+        status: "taken" as const,
+      }
+      const raw = JSON.stringify({
+        schemaVersion: 1,
+        supplements: [
+          canonicalState.supplements[0],
+          { ...canonicalState.supplements[0], id: "gummy", form: "Gummy" },
+          { ...canonicalState.supplements[0], id: "bad-start", startedOn: "banana" },
+          { ...canonicalState.supplements[0], id: "no-days", days: undefined },
+          { ...canonicalState.supplements[0], id: "no-name", name: 0 },
+        ],
+        doseLogs: [...canonicalState.doseLogs, orphanedLog],
+        wellnessLogs: canonicalState.wellnessLogs,
+      })
+      const adapter = createMemoryAdapter({ initial: raw })
+      const storage = createAppStorage(adapter)
+
+      const load = expectRecovered(storage.loadState())
+      expect(load.state).toEqual({
+        ...canonicalState,
+        doseLogs: [...canonicalState.doseLogs, orphanedLog],
+      })
+      expect(load.dropped).toEqual({
+        supplements: 4,
+        doseLogs: 0,
+        wellnessLogs: 0,
+      })
+      expect(load.repaired).toEqual(NO_REPAIRS)
+      expect(adapter.stored(load.backupKey)).toBe(raw)
+      expect(adapter.setAttempts).toEqual([load.backupKey])
+
+      expect(storage.saveState(load.state)).toEqual({ status: "saved" })
+      expect(JSON.parse(adapter.stored() ?? "")).toEqual({
+        schemaVersion: 1,
+        supplements: [canonicalState.supplements[0]],
+        doseLogs: [...canonicalState.doseLogs, orphanedLog],
+        wellnessLogs: canonicalState.wellnessLogs,
+      })
+    })
+
+    it("recovers repaired records with counts, a backup, and a clean write-back", () => {
+      const raw = JSON.stringify({
+        schemaVersion: 1,
+        supplements: [
+          {
+            ...canonicalState.supplements[0],
+            days: [1, 7, 7],
+            brand: 5,
+            totalCount: "60",
+          },
+        ],
+        doseLogs: [{ ...canonicalState.doseLogs[0], time: "08:00 PM" }],
+        wellnessLogs: canonicalState.wellnessLogs,
+      })
+      const adapter = createMemoryAdapter({ initial: raw })
+      const storage = createAppStorage(adapter)
+
+      const load = expectRecovered(storage.loadState())
+      expect(load.state).toEqual({
+        ...canonicalState,
+        supplements: [
+          {
+            ...canonicalState.supplements[0],
+            days: [1],
+            brand: "",
+            totalCount: 60,
+          },
+        ],
+        doseLogs: [{ ...canonicalState.doseLogs[0], time: "20:00" }],
+      })
+      expect(load.dropped).toEqual(NO_DROPS)
+      expect(load.repaired).toEqual({
+        supplements: 1,
+        doseLogs: 1,
+        wellnessLogs: 0,
+      })
+      expect(adapter.stored(load.backupKey)).toBe(raw)
+      expect(adapter.setAttempts).toEqual([load.backupKey])
+
+      expect(storage.saveState(load.state)).toEqual({ status: "saved" })
+      expect(JSON.parse(adapter.stored() ?? "")).toEqual({
+        schemaVersion: 1,
+        ...load.state,
+      })
+
+      // The repaired state was written back, so the next load is clean.
+      const next = expectOk(storage.loadState())
+      expect(next.state).toEqual(load.state)
+      expect(next.migratedFrom).toBeNull()
+    })
+
+    it("recovers a payload with both drops and repairs, carrying both counts", () => {
+      const raw = JSON.stringify({
+        schemaVersion: 1,
+        supplements: [
+          canonicalState.supplements[0],
+          { ...canonicalState.supplements[0], id: "repair-me", days: [7] },
+          { ...canonicalState.supplements[0], id: "drop-me", form: "Gummy" },
+        ],
+        doseLogs: canonicalState.doseLogs,
+        wellnessLogs: canonicalState.wellnessLogs,
+      })
+      const adapter = createMemoryAdapter({ initial: raw })
+      const storage = createAppStorage(adapter)
+
+      const load = expectRecovered(storage.loadState())
+      expect(load.dropped).toEqual({
+        supplements: 1,
+        doseLogs: 0,
+        wellnessLogs: 0,
+      })
+      expect(load.repaired).toEqual({
+        supplements: 1,
+        doseLogs: 0,
+        wellnessLogs: 0,
+      })
+      expect(load.state.supplements).toHaveLength(2)
+      expect(adapter.stored(load.backupKey)).toBe(raw)
     })
 
     it("prunes recovery backups to the three newest", () => {
@@ -346,6 +475,7 @@ describe("createAppStorage", () => {
         const load = expectRecovered(storage.loadState())
         expect(load.state).toEqual(EMPTY_STATE)
         expect(load.dropped).toEqual(NO_DROPS)
+        expect(load.repaired).toEqual(NO_REPAIRS)
         expect(adapter.stored(load.backupKey)).toBe(raw)
         expect(adapter.stored()).toBe(raw)
         expect(adapter.setAttempts).toEqual([load.backupKey])

@@ -79,3 +79,17 @@ _Avoid_: compliance, consistency
 **Adherence Streak**:
 The number of consecutive completed days with full adherence.
 _Avoid_: consistency streak, run
+
+### Storage recovery
+
+**Dropped Record**:
+A stored record that failed validation while loading and is left out of the loaded state; the recovery backup keeps the original.
+_Avoid_: rejected record, deleted record
+
+**Repaired Record**:
+A loaded record whose stored values were invalid and were removed, replaced, or rewritten while loading.
+_Avoid_: fixed record, cleaned record
+
+**Recovery Backup**:
+A verbatim copy of stored data taken before the app overwrites it after a load that dropped or repaired records.
+_Avoid_: snapshot, dump

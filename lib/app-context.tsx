@@ -27,11 +27,12 @@ import {
 import {
   createAppStorage,
   localStorageAdapter,
+  type RecoveryCounts,
   type SaveFailureReason,
 } from "@/lib/app-storage"
 import {
   totalDroppedRecords,
-  type DroppedRecordCounts,
+  totalRepairedRecords,
 } from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import {
@@ -106,11 +107,11 @@ const INITIAL_STATE: AppState = {
 const storage = createAppStorage(localStorageAdapter)
 
 /**
- * The provider's hydration status. `recovered` means the payload lost data or
- * failed the top-level shape check, was backed up, and the salvaged state
- * should be written back in the current format. `incompatible` means the
- * stored payload was written by a newer build: the provider hydrates empty,
- * toasts why, and never writes, so the payload is left untouched.
+ * The provider's hydration status. `recovered` means the payload lost or
+ * repaired data or failed the top-level shape check, was backed up, and the
+ * salvaged state should be written back in the current format. `incompatible`
+ * means the stored payload was written by a newer build: the provider hydrates
+ * empty, toasts why, and never writes, so the payload is left untouched.
  * `unavailable` means storage could not be reached at load time: the provider
  * serves the empty state, warns that changes will not be saved, and never
  * writes.
@@ -137,19 +138,42 @@ function assertNever(value: never): never {
   throw new Error(`Unexpected load status: ${String(value)}`)
 }
 
-/**
- * Toasts the backup location and how much was lost. The per-collection
- * details go to the console so the one-line summary stays readable.
- */
-function announceRecovery(backupKey: string, dropped: DroppedRecordCounts) {
-  const total = totalDroppedRecords(dropped)
-  console.warn("Recovered stored data", { backupKey, dropped })
+/** Renders a record count with the right noun for the one-line summary. */
+function recordCount(count: number): string {
+  return `${count} record${count === 1 ? "" : "s"}`
+}
 
-  toast.warning(
-    total === 0
-      ? `Recovered your data from a damaged store; no records were dropped. Backup saved as ${backupKey}.`
-      : `Recovered your data; ${total} record${total === 1 ? "" : "s"} were dropped. Backup saved as ${backupKey}.`,
-  )
+/** "1 record was" / "2 records were": a count with its agreeing verb. */
+function recordCountWithVerb(count: number): string {
+  return `${recordCount(count)} ${count === 1 ? "was" : "were"}`
+}
+
+/** The one-line summary of a recovery, with its backup location appended. */
+function recoverySummary(backupKey: string, counts: RecoveryCounts): string {
+  const dropped = totalDroppedRecords(counts.dropped)
+  const repaired = totalRepairedRecords(counts.repaired)
+
+  if (dropped > 0 && repaired > 0) {
+    return `Recovered your data; ${recordCountWithVerb(dropped)} dropped and ${repaired} repaired. Backup saved as ${backupKey}.`
+  }
+  if (repaired > 0) {
+    return `Cleaned up your stored data; ${recordCountWithVerb(repaired)} repaired. Backup saved as ${backupKey}.`
+  }
+  if (dropped > 0) {
+    return `Recovered your data; ${recordCountWithVerb(dropped)} dropped. Backup saved as ${backupKey}.`
+  }
+  return `Recovered your data from a damaged store; no records were dropped. Backup saved as ${backupKey}.`
+}
+
+/**
+ * Toasts the backup location and how much was lost or repaired. The
+ * per-collection details go to the console so the one-line summary stays
+ * readable.
+ */
+function announceRecovery(backupKey: string, counts: RecoveryCounts) {
+  console.warn("Recovered stored data", { backupKey, ...counts })
+
+  toast.warning(recoverySummary(backupKey, counts))
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -179,7 +203,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return
 
       case "recovered":
-        announceRecovery(result.backupKey, result.dropped)
+        announceRecovery(result.backupKey, {
+          dropped: result.dropped,
+          repaired: result.repaired,
+        })
         dispatch({ type: "HYDRATE", payload: result.state })
         setStatus("recovered")
         return

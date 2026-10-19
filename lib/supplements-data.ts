@@ -1,6 +1,8 @@
 export type DoseStatus = "taken" | "pending" | "snoozed"
 
-export type SupplementForm = "Capsule" | "Tablet" | "Liquid" | "Powder"
+export const SUPPLEMENT_FORMS = ["Capsule", "Tablet", "Liquid", "Powder"] as const
+
+export type SupplementForm = (typeof SUPPLEMENT_FORMS)[number]
 
 export type Supplement = {
   id: string
