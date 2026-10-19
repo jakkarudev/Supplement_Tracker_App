@@ -28,7 +28,8 @@ import {
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import { useAppState, useAppDispatch, nanoid, todayString } from "@/lib/app-context"
+import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
+import { today } from "@/lib/day-regimen"
 import {
   SOLID_DOSAGE_OPTIONS,
   dosageUnitForForm,
@@ -147,7 +148,7 @@ export function SupplementForm({ editingId, onDone }: Props) {
     form: "Capsule",
     dosage: "",
     notes: "",
-    startedOn: todayString(),
+    startedOn: today(),
     durationMode: "ongoing",
     durationDays: undefined,
     cycleEnabled: false,

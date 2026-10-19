@@ -43,23 +43,6 @@ export type Action =
   | { type: "LOG_DOSE"; payload: DoseLog }
   | { type: "LOG_WELLNESS"; payload: WellnessLog }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Returns today's date as "YYYY-MM-DD" in local time. */
-export function todayString(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
-}
-
-/** Parses "YYYY-MM-DD" to local day-of-week (0=Sun … 6=Sat). */
-export function dowFromDate(dateStr: string): number {
-  const [y, mo, d] = dateStr.split("-").map(Number)
-  return new Date(y, mo - 1, d).getDay()
-}
-
 // ─── Reducer ──────────────────────────────────────────────────────────────────
 
 function reducer(state: AppState, action: Action): AppState {
@@ -149,7 +132,6 @@ const INITIAL_STATE: AppState = {
 const STORAGE_KEY = "regimen-v1"
 
 const StateCtx = createContext<AppState>(INITIAL_STATE)
-// eslint-disable-next-line @typescript-eslint/no-empty-function
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -251,5 +233,5 @@ export function useAdherenceStats() {
   }, [supplements, doseLogs, wellnessLogs])
 }
 
-/** Generate a stable ID for a supplement dose action. */
+/** Generate a stable ID for new supplements and dose logs. */
 export { nanoid }
