@@ -10,7 +10,7 @@ import {
   formatTimeForDisplay,
   intakeInstantFor,
   isCalendarDate,
-  isValidIntakeTime,
+  isRecordableIntakeTime,
   normalizeTimeList,
   normalizeTimeOfDay,
   periodFromTime,
@@ -214,14 +214,14 @@ describe("actual intake time", () => {
   it("accepts a past time today and the current minute", () => {
     const now = new Date(2026, 4, 4, 10, 0)
 
-    expect(isValidIntakeTime("2026-05-04", "09:59", now)).toBe(true)
-    expect(isValidIntakeTime("2026-05-04", "10:00", now)).toBe(true)
+    expect(isRecordableIntakeTime("2026-05-04", "09:59", now)).toBe(true)
+    expect(isRecordableIntakeTime("2026-05-04", "10:00", now)).toBe(true)
   })
 
   it("rejects a time that would be in the future", () => {
     const now = new Date(2026, 4, 4, 10, 0)
 
-    expect(isValidIntakeTime("2026-05-04", "10:01", now)).toBe(false)
+    expect(isRecordableIntakeTime("2026-05-04", "10:01", now)).toBe(false)
   })
 
   it("accepts a pre-05:00 time on the logical day it belongs to", () => {
@@ -229,27 +229,27 @@ describe("actual intake time", () => {
     // previous calendar date and 02:00 resolves to today's physical morning.
     const now = new Date(2026, 4, 4, 2, 30)
 
-    expect(isValidIntakeTime("2026-05-03", "02:00", now)).toBe(true)
+    expect(isRecordableIntakeTime("2026-05-03", "02:00", now)).toBe(true)
   })
 
   it("rejects a pre-05:00 time that lands on the next physical date", () => {
     // At 06:00 on logical day 2026-05-04, 04:00 resolves to 2026-05-05.
     const now = new Date(2026, 4, 4, 6, 0)
 
-    expect(isValidIntakeTime("2026-05-04", "04:00", now)).toBe(false)
+    expect(isRecordableIntakeTime("2026-05-04", "04:00", now)).toBe(false)
   })
 
   it("accepts a time recorded earlier in the same minute", () => {
     const now = new Date(2026, 4, 4, 10, 12, 30)
 
-    expect(isValidIntakeTime("2026-05-04", "10:12", now)).toBe(true)
+    expect(isRecordableIntakeTime("2026-05-04", "10:12", now)).toBe(true)
   })
 
   it("rejects invalid times", () => {
     const now = new Date(2026, 4, 4, 10, 0)
 
-    expect(isValidIntakeTime("2026-05-04", "noon", now)).toBe(false)
-    expect(isValidIntakeTime("2026-05-04", "24:00", now)).toBe(false)
+    expect(isRecordableIntakeTime("2026-05-04", "noon", now)).toBe(false)
+    expect(isRecordableIntakeTime("2026-05-04", "24:00", now)).toBe(false)
   })
 
   it("formats a local Date as a canonical 24-hour time of day", () => {

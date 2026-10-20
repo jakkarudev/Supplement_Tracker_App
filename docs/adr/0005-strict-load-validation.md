@@ -16,5 +16,5 @@ The always-on normalizer (`normalizeSupplement` in `lib/storage-migration.ts`) n
 - **Coercing an unknown `form` to `Capsule`**: rejected. Form drives the dosage unit, so coercing invents user-visible meaning; the backup keeps the raw value.
 - **Defaulting a missing or invalid `startedOn`** (to `1970-01-01` or today): rejected for the same reason; a wrong start date silently shifts duration and cycle phase.
 - **Repairing silently** (no counts, no backup, no toast): rejected. A filtered `days` entry is stored data being deleted, and ADR 0004's promise is that nothing is overwritten without a copy.
-- **A 1→2 migration step**: rejected. Steps never see a current-version payload, which is exactly where hand edits and foreign writes live, and steps must be non-destructive.
+- **A 1→2 migration step for validation hardening**: rejected. Steps never see a current-version payload, which is exactly where hand edits and foreign writes live, and steps must be non-destructive. (The later `1 → 2` step that adds `takenAt` is a no-op: it transforms no records and leaves validation in the normalizer.)
 - **Dropping records on any invalid value, repairable ones included**: rejected. A non-string brand or a numeric-string count has a truthful, lossless fix.

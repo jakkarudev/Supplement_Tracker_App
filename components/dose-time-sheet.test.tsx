@@ -86,6 +86,25 @@ describe("DoseTimeSheet", () => {
     expect(onSave).toHaveBeenCalledWith("09:59")
   })
 
+  it("refuses to save when the logical day has changed since opening", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 4, 4, 4, 59))
+
+    const { onSave } = renderSheet({
+      logicalDate: "2026-05-03",
+      initialTime: "04:59",
+    })
+
+    vi.setSystemTime(new Date(2026, 4, 4, 5, 1))
+    fireEvent.change(screen.getByLabelText("Actual time"), {
+      target: { value: "05:01" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(screen.getByRole("alert").textContent).toMatch(/day has changed/i)
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
   it("cancels without saving", () => {
     const { onSave, onOpenChange } = renderSheet()
 

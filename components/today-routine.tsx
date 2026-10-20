@@ -225,6 +225,7 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
 
       {timeSheet && (
         <DoseTimeSheet
+          key={`${timeSheet.dose.key}|${timeSheet.mode}`}
           open
           mode={timeSheet.mode}
           logicalDate={timeSheet.dose.date}

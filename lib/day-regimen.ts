@@ -170,7 +170,7 @@ export function intakeInstantFor(
  * `now`. The resolved instant carries the 05:00 attribution, so a pre-dawn time
  * that would land on the next physical date is rejected as future.
  */
-export function isValidIntakeTime(
+export function isRecordableIntakeTime(
   logicalDate: CalendarDate,
   time: string,
   now: Date = new Date(),
