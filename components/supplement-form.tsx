@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Boxes, Clock, Link, NotebookPen, Pill, Plus, Save, X } from "lucide-react"
+import { Boxes, Clock, Link, Link2, NotebookPen, Pill, Plus, Save, X } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
@@ -31,6 +31,8 @@ import { cn } from "@/lib/utils"
 import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
 import { requestReminderPermission } from "@/lib/reminders"
 import { today } from "@/lib/day-regimen"
+import { intervalLabel } from "@/lib/spacing"
+import { minimumScheduledGap } from "@/lib/schedule-gap"
 import {
   dosageUnitForForm,
   formatDosage,
@@ -40,7 +42,7 @@ import {
   parseDosageValueForForm,
   solidDosageOptionsFor,
 } from "@/lib/dosage"
-import { SUPPLEMENT_FORMS } from "@/lib/supplements-data"
+import { SUPPLEMENT_FORMS, type SpacingRule, type Supplement } from "@/lib/supplements-data"
 
 const WEEK = [
   { label: "Sun", value: 0 },
@@ -152,8 +154,292 @@ type Props = {
   onDone?: () => void
 }
 
+/**
+ * The copy that says the two base Schedules leave less room than the rule
+ * asks for. The rule is still saved: the user may be about to move a time.
+ */
+function scheduleGapWarning(intervalMinutes: number, gap: number): string {
+  return `Their schedules are ${intervalLabel(gap)} apart, but the rule asks for ${intervalLabel(intervalMinutes)}. The later dose will be held back whenever the first is taken late.`
+}
+
+type SpacingRuleRowProps = {
+  rule: SpacingRule
+  partnerName: string
+  /** The gap the two base Schedules leave, when they share a day. */
+  gap: number | null
+  onUpdate: (rule: SpacingRule) => void
+  onRemove: (ruleId: string) => void
+}
+
+/**
+ * One listed rule: its partner, its interval, and the warning when the base
+ * Schedules leave less room than the rule asks for.
+ *
+ * The interval is held in local state and committed on blur or Enter, so a
+ * keystroke never remounts the input and the caret stays where it is.
+ */
+function SpacingRuleRow({
+  rule,
+  partnerName,
+  gap,
+  onUpdate,
+  onRemove,
+}: SpacingRuleRowProps) {
+  const [draft, setDraft] = useState(String(rule.minimumIntervalMinutes / 60))
+  const committed = useRef(rule.minimumIntervalMinutes)
+
+  // The stored rule can change elsewhere, e.g. an adoption from another tab.
+  // The draft follows it, but never while the user is typing.
+  useEffect(() => {
+    if (committed.current === rule.minimumIntervalMinutes) return
+    committed.current = rule.minimumIntervalMinutes
+    setDraft(String(rule.minimumIntervalMinutes / 60))
+  }, [rule.minimumIntervalMinutes])
+
+  const hours = Number(draft)
+  const intervalMinutes =
+    Number.isInteger(hours) && hours > 0 ? hours * 60 : rule.minimumIntervalMinutes
+  const warning =
+    gap !== null && gap < intervalMinutes
+      ? scheduleGapWarning(intervalMinutes, gap)
+      : null
+
+  function commit() {
+    if (!Number.isInteger(hours) || hours <= 0) return
+    if (hours * 60 === rule.minimumIntervalMinutes) return
+
+    onUpdate({ ...rule, minimumIntervalMinutes: hours * 60 })
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card/50 p-3">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{partnerName}</p>
+        <p className="text-xs text-muted-foreground">
+          Minimum {intervalLabel(intervalMinutes)} apart
+        </p>
+        {warning !== null && (
+          <p role="alert" className="mt-1 text-xs text-destructive">
+            {warning}
+          </p>
+        )}
+      </div>
+      <Input
+        type="number"
+        min={1}
+        step={1}
+        inputMode="numeric"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return
+          event.preventDefault()
+          commit()
+        }}
+        aria-label={`Minimum hours apart from ${partnerName}`}
+        className="h-9 w-20 text-center"
+      />
+      <button
+        type="button"
+        onClick={() => onRemove(rule.id)}
+        aria-label={`Remove spacing rule with ${partnerName}`}
+        className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-destructive"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </li>
+  )
+}
+
+type SpacingSectionProps = {
+  /** The supplement being edited, or null while a new one is being written. */
+  supplement: Supplement | null
+  rules: SpacingRule[]
+  supplements: Supplement[]
+  onAdd: (rule: SpacingRule) => void
+  onUpdate: (rule: SpacingRule) => void
+  onRemove: (ruleId: string) => void
+}
+
+/**
+ * The spacing rules that involve one supplement. The supplement being edited
+ * is always one side of a new rule, so the partner is the only side the user
+ * picks. A pair carries one rule, so the partner is offered only when it has
+ * no rule with this supplement yet.
+ */
+function SpacingSection({
+  supplement,
+  rules,
+  supplements,
+  onAdd,
+  onUpdate,
+  onRemove,
+}: SpacingSectionProps) {
+  const [partnerId, setPartnerId] = useState("")
+  const [hours, setHours] = useState("4")
+
+  const involved =
+    supplement === null
+      ? []
+      : rules.filter(
+          (rule) =>
+            rule.supplementAId === supplement.id || rule.supplementBId === supplement.id,
+        )
+
+  const linkedIds = new Set(
+    involved.flatMap((rule) => [rule.supplementAId, rule.supplementBId]),
+  )
+  const partners = supplements.filter(
+    (candidate) => candidate.id !== supplement?.id && !linkedIds.has(candidate.id),
+  )
+
+  /** The other side of a rule: the supplement this one is linked to. */
+  function partnerOf(rule: SpacingRule): Supplement | undefined {
+    const otherId =
+      rule.supplementAId === supplement?.id ? rule.supplementBId : rule.supplementAId
+    return supplements.find((candidate) => candidate.id === otherId)
+  }
+
+  /** The gap the two base Schedules leave, when they share a day. */
+  function scheduleGap(first: Supplement, second: Supplement): number | null {
+    return minimumScheduledGap(first, second, today())
+  }
+
+  const selectedPartner = supplements.find((candidate) => candidate.id === partnerId)
+  const parsedHours = Number(hours)
+  const draftInterval =
+    Number.isInteger(parsedHours) && parsedHours > 0 ? parsedHours * 60 : null
+  const addGap =
+    supplement !== null && selectedPartner !== undefined
+      ? scheduleGap(supplement, selectedPartner)
+      : null
+  const addWarning =
+    draftInterval !== null && addGap !== null && addGap < draftInterval
+      ? scheduleGapWarning(draftInterval, addGap)
+      : null
+
+  function handleAdd() {
+    if (supplement === null || partnerId === "") return
+    if (draftInterval === null) return
+
+    const rule: SpacingRule = {
+      id: nanoid(),
+      supplementAId: supplement.id,
+      supplementBId: partnerId,
+      minimumIntervalMinutes: draftInterval,
+    }
+
+    onAdd(rule)
+
+    // The partner now carries a rule with this supplement, so it is no
+    // longer on offer.
+    setPartnerId("")
+  }
+
+  return (
+    <SectionCard
+      icon={Link2}
+      title="Spacing"
+      description="Keep two linked supplements a minimum distance apart."
+    >
+      {supplement === null ? (
+        <p className="text-sm text-muted-foreground">
+          Save this supplement first to link it to another one.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {involved.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No linked supplements yet.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {involved.map((rule) => {
+                const partner = partnerOf(rule)
+                return (
+                  <SpacingRuleRow
+                    key={rule.id}
+                    rule={rule}
+                    partnerName={partner?.name ?? "another supplement"}
+                    gap={
+                      partner === undefined ? null : scheduleGap(supplement, partner)
+                    }
+                    onUpdate={onUpdate}
+                    onRemove={onRemove}
+                  />
+                )
+              })}
+            </ul>
+          )}
+
+          <div className="space-y-3 rounded-2xl border border-border bg-card/50 p-3">
+            <div className="space-y-2">
+              <Label htmlFor="spacing-partner">Partner supplement</Label>
+              <Select
+                value={partnerId}
+                onValueChange={(value) => {
+                  if (value === "") return
+                  setPartnerId(value)
+                }}
+              >
+                <SelectTrigger id="spacing-partner" className="w-full">
+                  <SelectValue placeholder="Choose a supplement" />
+                </SelectTrigger>
+                <SelectContent>
+                  {partners.map((partner) => (
+                    <SelectItem key={partner.id} value={partner.id}>
+                      {partner.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Label htmlFor="spacing-hours" className="text-sm text-muted-foreground">
+                Minimum
+              </Label>
+              <Input
+                id="spacing-hours"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                aria-label="Minimum hours"
+                value={hours}
+                onChange={(event) => setHours(event.target.value)}
+                className="h-9 w-20 text-center"
+              />
+              <span className="text-sm text-muted-foreground">hours apart</span>
+            </div>
+
+            {addWarning !== null && (
+              <p role="alert" className="text-sm text-destructive">
+                {addWarning}
+              </p>
+            )}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAdd}
+              disabled={partnerId === ""}
+              className="rounded-xl"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add rule
+            </Button>
+          </div>
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
 export function SupplementForm({ editingId, onDone }: Props) {
-  const { supplements } = useAppState()
+  const { supplements, spacingRules } = useAppState()
   const dispatch = useAppDispatch()
   const editing = supplements.find((s) => s.id === editingId) ?? null
 
@@ -782,6 +1068,16 @@ export function SupplementForm({ editingId, onDone }: Props) {
             />
           </div>
         </SectionCard>
+
+        <SpacingSection
+          key={editing?.id ?? "new-supplement"}
+          supplement={editing}
+          rules={spacingRules}
+          supplements={supplements}
+          onAdd={(rule) => dispatch({ type: "ADD_SPACING_RULE", payload: rule })}
+          onUpdate={(rule) => dispatch({ type: "UPDATE_SPACING_RULE", payload: rule })}
+          onRemove={(ruleId) => dispatch({ type: "DELETE_SPACING_RULE", payload: ruleId })}
+        />
 
         <div className="glass-strong sticky bottom-[calc(5.75rem+env(safe-area-inset-bottom,0px))] z-20 -mx-3 grid gap-2 rounded-2xl p-3 backdrop-blur-sm sm:static sm:mx-0 sm:flex sm:justify-end sm:bg-transparent sm:p-0 sm:shadow-none">
           <Button type="submit" size="lg" className="w-full rounded-xl sm:w-auto">

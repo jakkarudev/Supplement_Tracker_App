@@ -1,4 +1,4 @@
-import type { DoseLog, Supplement } from "./supplements-data"
+import type { DoseLog, SpacingRule, Supplement } from "./supplements-data"
 import {
   clockFromTime,
   doseKey,
@@ -9,6 +9,7 @@ import {
   type CalendarDate,
   type ScheduledDose,
 } from "./day-regimen"
+import { buildSpacingPlan, type SpacingPlan } from "./spacing"
 
 export const REMINDER_HORIZON_DAYS = 30
 export const MAX_PENDING_REMINDERS = 60
@@ -27,6 +28,7 @@ export type PlannedReminder = {
 export type ReminderPlanInput = {
   supplements: Supplement[]
   doseLogs: DoseLog[]
+  spacingRules: SpacingRule[]
 }
 
 export type ReminderPlanOptions = {
@@ -95,13 +97,16 @@ function buildReminder(
 }
 
 /**
- * Builds the Reminder Plan from the Regimen and Dose Logs over a horizon that
- * starts at the current Logical Day. Scheduled Doses with any Dose Log, and
- * physical times at or before `now`, produce no reminder. Inventory is
- * deliberately ignored.
+ * Builds the Reminder Plan from the Regimen, the Dose Logs, and the Spacing
+ * Rules over a horizon that starts at the current Logical Day. Scheduled Doses
+ * with any Dose Log, and physical times at or before `now`, produce no
+ * reminder. A dose a Spacing Rule adjusted is planned at its adjusted time, so
+ * it carries a new id and the old Reminder is cancelled by the sync. A dose
+ * whose plan conflicts produces no reminder at all. Inventory is deliberately
+ * ignored.
  */
 export function planReminders(
-  { supplements, doseLogs }: ReminderPlanInput,
+  { supplements, doseLogs, spacingRules }: ReminderPlanInput,
   now: Date,
   {
     horizonDays = REMINDER_HORIZON_DAYS,
@@ -114,18 +119,37 @@ export function planReminders(
   const start = logicalDateFrom(now)
   const groups = new Map<string, { date: CalendarDate; time: string; at: Date; doses: ScheduledDose[] }>()
 
+  // The spacing plan is per logical day, and only a rule can adjust a dose, so
+  // the plan is built once per day that has one.
+  const plans = new Map<CalendarDate, SpacingPlan>()
+  function spacingPlanFor(date: CalendarDate): SpacingPlan {
+    const existing = plans.get(date)
+    if (existing) return existing
+
+    const plan =
+      spacingRules.length === 0
+        ? {}
+        : buildSpacingPlan({ supplements, doseLogs, spacingRules }, date)
+    plans.set(date, plan)
+    return plan
+  }
+
   for (const dose of upcomingScheduledDoses(supplements, start, horizonDays)) {
     if (logged.has(dose.key)) continue
 
-    const at = dateTimeFromLogicalTime(dose.date, dose.time)
+    const entry = spacingPlanFor(dose.date)[dose.key]
+    if (entry?.conflict) continue
+
+    const time = entry?.adjustedTime ?? dose.time
+    const at = dateTimeFromLogicalTime(dose.date, time)
     if (at.getTime() <= now.getTime()) continue
 
-    const slot = `${dose.date}|${dose.time}`
+    const slot = `${dose.date}|${time}`
     const group = groups.get(slot)
     if (group) {
       group.doses.push(dose)
     } else {
-      groups.set(slot, { date: dose.date, time: dose.time, at, doses: [dose] })
+      groups.set(slot, { date: dose.date, time, at, doses: [dose] })
     }
   }
 

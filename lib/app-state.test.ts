@@ -3,15 +3,16 @@ import { describe, expect, expectTypeOf, it } from "vitest"
 import type { AppState, Settings } from "./app-state"
 import type { AppState as ProviderAppState } from "./app-context"
 import type { TimeFormat } from "./day-regimen"
-import type { DoseLog, Supplement, WellnessLog } from "./supplements-data"
+import type { DoseLog, SpacingRule, Supplement, WellnessLog } from "./supplements-data"
 import { migrateStoredAppState } from "./storage-migration"
 
 describe("AppState", () => {
-  it("describes the three persisted collections and the display settings", () => {
+  it("describes the persisted collections and the display settings", () => {
     expectTypeOf<AppState>().toEqualTypeOf<{
       supplements: Supplement[]
       doseLogs: DoseLog[]
       wellnessLogs: WellnessLog[]
+      spacingRules: SpacingRule[]
       settings: Settings
     }>()
   })
@@ -28,10 +29,11 @@ describe("AppState", () => {
 
   it("is the shape storage migration returns", () => {
     const result = migrateStoredAppState({
-      schemaVersion: 3,
+      schemaVersion: 4,
       supplements: [],
       doseLogs: [],
       wellnessLogs: [],
+      spacingRules: [],
       settings: { timeFormat: "12h" },
     })
 
@@ -44,6 +46,7 @@ describe("AppState", () => {
       supplements: [],
       doseLogs: [],
       wellnessLogs: [],
+      spacingRules: [],
       settings: { timeFormat: "12h" },
     })
   })

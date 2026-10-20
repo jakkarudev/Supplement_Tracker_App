@@ -1,10 +1,20 @@
-import type { DoseLog, DoseStatus, Supplement } from "./supplements-data"
+import type { DoseLog, DoseStatus, SpacingRule, Supplement } from "./supplements-data"
 import { dosageInventoryAmount } from "./dosage"
 import { doseKey, normalizeTimeOfDay, type CalendarDate } from "./day-regimen"
 import { nanoid } from "./nanoid"
 
-/** The tracked state this module owns: supplements and their dose logs. */
+/** The tracked state this module owns: supplements, their dose logs, and their spacing rules. */
 export type RegimenState = {
+  supplements: Supplement[]
+  doseLogs: DoseLog[]
+  spacingRules: SpacingRule[]
+}
+
+/**
+ * The state the dose log write model owns: the supplements and their dose
+ * logs. The write model knows nothing about rules, so it never carries them.
+ */
+export type DoseLogState = {
   supplements: Supplement[]
   doseLogs: DoseLog[]
 }
@@ -39,7 +49,7 @@ export function updateSupplement(
   }
 }
 
-/** Removes a supplement and its entire dose history. */
+/** Removes a supplement, its entire dose history, and the rules that involve it. */
 export function deleteSupplement(
   state: RegimenState,
   supplementId: string,
@@ -47,6 +57,42 @@ export function deleteSupplement(
   return {
     supplements: state.supplements.filter((s) => s.id !== supplementId),
     doseLogs: state.doseLogs.filter((log) => log.supplementId !== supplementId),
+    spacingRules: state.spacingRules.filter(
+      (rule) =>
+        rule.supplementAId !== supplementId && rule.supplementBId !== supplementId,
+    ),
+  }
+}
+
+/** Appends a spacing rule. Rules are permanent; nothing else moves. */
+export function addSpacingRule(
+  state: RegimenState,
+  rule: SpacingRule,
+): RegimenState {
+  return { ...state, spacingRules: [...state.spacingRules, rule] }
+}
+
+/** Replaces a spacing rule by id. */
+export function updateSpacingRule(
+  state: RegimenState,
+  rule: SpacingRule,
+): RegimenState {
+  return {
+    ...state,
+    spacingRules: state.spacingRules.map((existing) =>
+      existing.id === rule.id ? rule : existing,
+    ),
+  }
+}
+
+/** Removes a spacing rule by id. */
+export function deleteSpacingRule(
+  state: RegimenState,
+  ruleId: string,
+): RegimenState {
+  return {
+    ...state,
+    spacingRules: state.spacingRules.filter((rule) => rule.id !== ruleId),
   }
 }
 
@@ -65,9 +111,10 @@ function withTakenAt(log: DoseLog, value: string | undefined): DoseLog {
  * difference: entering "taken" consumes the supplement's dosage amount, and
  * leaving "taken" restores the amount recorded when it was taken. "pending"
  * means no log exists; inventory may go negative rather than clamping, so the
- * arithmetic stays reversible.
+ * arithmetic stays reversible. The write model owns the supplements and their
+ * dose logs only: a Spacing Rule never reaches it.
  */
-export function logDose(state: RegimenState, input: LogDoseInput): RegimenState {
+export function logDose(state: DoseLogState, input: LogDoseInput): DoseLogState {
   const key = doseKey(input.supplementId, input.date, input.time)
   const index = state.doseLogs.findIndex(
     (log) => doseKey(log.supplementId, log.date, log.time) === key,

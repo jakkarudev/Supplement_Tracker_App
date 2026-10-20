@@ -10,13 +10,14 @@ import {
 import { TodayRoutine } from "./today-routine"
 import { AppStateContext } from "@/lib/app-context"
 import type { AppState } from "@/lib/app-state"
-import type { DoseLog, Supplement } from "@/lib/supplements-data"
+import type { DoseLog, SpacingRule, Supplement } from "@/lib/supplements-data"
 
 const mocks = vi.hoisted(() => ({
   state: {
     supplements: [],
     doseLogs: [],
     wellnessLogs: [],
+    spacingRules: [],
     settings: { timeFormat: "12h" },
   } as AppState,
   dispatch: vi.fn(),
@@ -95,6 +96,7 @@ beforeEach(() => {
     supplements: [supplement],
     doseLogs: [takenLog({ takenAt: "10:12" })],
     wellnessLogs: [],
+    spacingRules: [],
     settings: { timeFormat: "12h" },
   }
   vi.useFakeTimers()
@@ -221,5 +223,143 @@ describe("TodayRoutine actual intake time", () => {
     slideToConfirm()
 
     expect(screen.getByText("Log actual time")).toBeTruthy()
+  })
+})
+
+describe("TodayRoutine spacing rules", () => {
+  const zinc: Supplement = {
+    ...supplement,
+    id: "zinc",
+    name: "Zinc",
+    times: ["12:00"],
+  }
+
+  const RULE: SpacingRule = {
+    id: "rule-1",
+    supplementAId: supplement.id,
+    supplementBId: "zinc",
+    minimumIntervalMinutes: 240,
+  }
+
+  it("shows the earliest time an adjusted pending dose may be taken", () => {
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [takenLog({ takenAt: "10:00" })],
+      spacingRules: [RULE],
+    }
+
+    renderRoutine()
+
+    expect(screen.getByText("Earliest at 02:00 PM")).toBeTruthy()
+  })
+
+  it("shows the earliest time in 24-hour form when the preference says so", () => {
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [takenLog({ takenAt: "10:00" })],
+      spacingRules: [RULE],
+      settings: { timeFormat: "24h" },
+    }
+
+    renderRoutine()
+
+    expect(screen.getByText("Earliest at 14:00")).toBeTruthy()
+  })
+
+  it("shows no earliest time when no rule adjusts the dose", () => {
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [takenLog({ takenAt: "10:00" })],
+      spacingRules: [],
+    }
+
+    renderRoutine()
+
+    expect(screen.queryByText(/^Earliest at/)).toBeNull()
+  })
+
+  it("shows a conflict notice on the taken dose and on the partner", () => {
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [
+        takenLog({ takenAt: "10:00" }),
+        {
+          id: "log-2",
+          supplementId: "zinc",
+          date: DATE,
+          time: "12:00",
+          status: "taken",
+          takenAt: "09:00",
+        },
+      ],
+      spacingRules: [RULE],
+    }
+
+    renderRoutine()
+
+    const notices = screen.getAllByRole("alert")
+    expect(notices).toHaveLength(2)
+    expect(notices[0].textContent).toMatch(/spacing conflict/i)
+    expect(notices[0].textContent).toMatch(/4 hours/)
+  })
+
+  it("offers the current time as the default while the adjusted time has not arrived", () => {
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [takenLog({ takenAt: "10:00" })],
+      spacingRules: [RULE],
+    }
+
+    renderRoutine()
+
+    const sliders = screen.getAllByRole("button", { name: "Slide to confirm dose" })
+    fireEvent.pointerDown(sliders[0], { pointerId: 1 })
+    fireEvent.pointerUp(window)
+    act(() => {
+      vi.advanceTimersByTime(320)
+    })
+
+    // The adjusted time is 14:00, which has not arrived yet, so the sheet
+    // starts at the current time instead of refusing its own suggestion.
+    expect((screen.getByLabelText("Actual time") as HTMLInputElement).value).toBe("10:30")
+  })
+
+  it("offers the adjusted time as the default once it has arrived", () => {
+    vi.setSystemTime(new Date(2026, 4, 4, 15, 0))
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [takenLog({ takenAt: "10:00" })],
+      spacingRules: [RULE],
+    }
+
+    renderRoutine()
+
+    const sliders = screen.getAllByRole("button", { name: "Slide to confirm dose" })
+    fireEvent.pointerDown(sliders[0], { pointerId: 1 })
+    fireEvent.pointerUp(window)
+    act(() => {
+      vi.advanceTimersByTime(320)
+    })
+
+    expect((screen.getByLabelText("Actual time") as HTMLInputElement).value).toBe("14:00")
+  })
+
+  it("keeps the slot of a dose that is outside the window around the partner", () => {
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [takenLog({ takenAt: "20:00" })],
+      spacingRules: [RULE],
+    }
+
+    renderRoutine()
+
+    expect(screen.queryByText(/^Earliest at/)).toBeNull()
   })
 })

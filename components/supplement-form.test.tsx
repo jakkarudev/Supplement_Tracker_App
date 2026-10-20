@@ -7,6 +7,9 @@ import type { Supplement } from "@/lib/supplements-data"
 const mocks = vi.hoisted(() => ({
   dispatch: vi.fn(),
   supplements: [] as unknown[],
+  spacingRules: [] as unknown[],
+  /** Re-renders the form after a dispatch, the way the provider would. */
+  rerender: null as null | (() => void),
 }))
 
 vi.mock("@/lib/app-context", () => ({
@@ -14,9 +17,21 @@ vi.mock("@/lib/app-context", () => ({
     supplements: mocks.supplements,
     doseLogs: [],
     wellnessLogs: [],
+    spacingRules: mocks.spacingRules,
     settings: { timeFormat: "12h" },
   }),
-  useAppDispatch: () => mocks.dispatch,
+  useAppDispatch: () => (action: { type: string; payload: { id?: string } }) => {
+    mocks.dispatch(action)
+
+    // A rule change reaches the form the way the provider delivers it: the
+    // stored rule changes and the form renders again.
+    if (action.type === "UPDATE_SPACING_RULE" && action.payload.id) {
+      mocks.spacingRules = mocks.spacingRules.map((rule) =>
+        (rule as { id: string }).id === action.payload.id ? action.payload : rule,
+      )
+      mocks.rerender?.()
+    }
+  },
   nanoid: () => "new-id",
 }))
 
@@ -63,6 +78,8 @@ function fieldValue(label: string): string {
 beforeEach(() => {
   mocks.dispatch.mockClear()
   mocks.supplements = []
+  mocks.spacingRules = []
+  mocks.rerender = null
 })
 
 afterEach(cleanup)
@@ -300,5 +317,264 @@ describe("SupplementForm creating a supplement", () => {
 
     expect(await screen.findByText("Dosage is required")).toBeTruthy()
     expect(mocks.dispatch).not.toHaveBeenCalled()
+  })
+})
+
+describe("SupplementForm spacing rules", () => {
+  const copper = supplement({ id: "copper", name: "Copper", times: ["08:00"] })
+  const zinc = supplement({ id: "zinc", name: "Zinc", times: ["12:00"] })
+
+  function renderEditing(id = "copper") {
+    mocks.supplements = [copper, zinc]
+    render(<SupplementForm editingId={id} />)
+  }
+
+  it("lists the rules that involve the edited supplement", () => {
+    mocks.spacingRules = [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+      {
+        id: "rule-2",
+        supplementAId: "other",
+        supplementBId: "another",
+        minimumIntervalMinutes: 120,
+      },
+    ]
+
+    renderEditing()
+
+    expect(screen.getByText("Minimum 4 hours apart")).toBeTruthy()
+    expect(screen.queryByText("Minimum 2 hours apart")).toBeNull()
+  })
+
+  it("adds a rule with the edited supplement on one side", () => {
+    renderEditing()
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Partner supplement" }), {
+      key: "Enter",
+    })
+    fireEvent.click(screen.getByRole("option", { name: "Zinc" }))
+    fireEvent.change(screen.getByLabelText("Minimum hours"), { target: { value: "6" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add rule" }))
+
+    expect(mocks.dispatch).toHaveBeenCalledWith({
+      type: "ADD_SPACING_RULE",
+      payload: {
+        id: "new-id",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 360,
+      },
+    })
+  })
+
+  it("changes the interval of a rule when the input loses focus", () => {
+    mocks.spacingRules = [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ]
+
+    renderEditing()
+
+    const input = screen.getByLabelText("Minimum hours apart from Zinc")
+    fireEvent.change(input, { target: { value: "8" } })
+    fireEvent.blur(input)
+
+    expect(mocks.dispatch).toHaveBeenCalledWith({
+      type: "UPDATE_SPACING_RULE",
+      payload: {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 480,
+      },
+    })
+  })
+
+  it("changes the interval of a rule when the user presses Enter", () => {
+    mocks.spacingRules = [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ]
+
+    renderEditing()
+
+    const input = screen.getByLabelText("Minimum hours apart from Zinc")
+    fireEvent.change(input, { target: { value: "6" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+
+    expect(mocks.dispatch).toHaveBeenCalledWith({
+      type: "UPDATE_SPACING_RULE",
+      payload: {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 360,
+      },
+    })
+  })
+
+  it("keeps the interval input focused while a two-digit value is typed", () => {
+    mocks.supplements = [copper, zinc]
+    mocks.spacingRules = [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ]
+
+    const view = render(<SupplementForm editingId="copper" />)
+    mocks.rerender = () => view.rerender(<SupplementForm editingId="copper" />)
+
+    const input = screen.getByLabelText("Minimum hours apart from Zinc") as HTMLInputElement
+    input.focus()
+    fireEvent.change(input, { target: { value: "1" } })
+    fireEvent.change(input, { target: { value: "12" } })
+
+    expect(input.value).toBe("12")
+    expect(document.activeElement).toBe(input)
+    expect(mocks.dispatch).not.toHaveBeenCalled()
+  })
+
+  it("removes a rule", () => {
+    mocks.spacingRules = [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ]
+
+    renderEditing()
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove spacing rule with Zinc" }))
+
+    expect(mocks.dispatch).toHaveBeenCalledWith({
+      type: "DELETE_SPACING_RULE",
+      payload: "rule-1",
+    })
+  })
+
+  it("warns as soon as the partner and interval make the schedules too close, and still saves the rule", () => {
+    renderEditing()
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Partner supplement" }), {
+      key: "Enter",
+    })
+    fireEvent.click(screen.getByRole("option", { name: "Zinc" }))
+    fireEvent.change(screen.getByLabelText("Minimum hours"), { target: { value: "8" } })
+
+    // The warning is there before the rule is saved.
+    const warning = screen.getByRole("alert").textContent ?? ""
+    expect(warning).toMatch(/8 hours/i)
+    expect(warning).toMatch(/4 hours apart/i)
+
+    fireEvent.click(screen.getByRole("button", { name: "Add rule" }))
+
+    expect(mocks.dispatch).toHaveBeenCalledWith({
+      type: "ADD_SPACING_RULE",
+      payload: {
+        id: "new-id",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 480,
+      },
+    })
+  })
+
+  it("warns when a listed rule asks for more than the schedules leave", () => {
+    mocks.spacingRules = [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 480,
+      },
+    ]
+
+    renderEditing()
+
+    const warning = screen.getByRole("alert").textContent ?? ""
+    expect(warning).toMatch(/8 hours/i)
+    expect(warning).toMatch(/4 hours apart/i)
+  })
+
+  it("warns when a listed rule's interval is raised past the gap", () => {
+    mocks.spacingRules = [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ]
+
+    renderEditing()
+
+    expect(screen.queryByRole("alert")).toBeNull()
+
+    fireEvent.change(screen.getByLabelText("Minimum hours apart from Zinc"), {
+      target: { value: "8" },
+    })
+
+    const warning = screen.getByRole("alert").textContent ?? ""
+    expect(warning).toMatch(/8 hours/i)
+    expect(warning).toMatch(/4 hours apart/i)
+  })
+
+  it("offers only partners that have no rule with this supplement yet", () => {
+    mocks.spacingRules = [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ]
+
+    renderEditing()
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Partner supplement" }), {
+      key: "Enter",
+    })
+
+    expect(screen.queryByRole("option", { name: "Zinc" })).toBeNull()
+    expect(screen.queryByRole("option", { name: "Copper" })).toBeNull()
+  })
+
+  it("does not warn when the base schedules already satisfy the rule", () => {
+    renderEditing()
+
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Partner supplement" }), {
+      key: "Enter",
+    })
+    fireEvent.click(screen.getByRole("option", { name: "Zinc" }))
+    fireEvent.change(screen.getByLabelText("Minimum hours"), { target: { value: "4" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add rule" }))
+
+    expect(screen.queryByRole("alert")).toBeNull()
+  })
+
+  it("offers no partner to pick when the supplement is not saved yet", () => {
+    mocks.supplements = [copper, zinc]
+
+    render(<SupplementForm />)
+
+    expect(screen.queryByRole("combobox", { name: "Partner supplement" })).toBeNull()
   })
 })

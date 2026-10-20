@@ -76,6 +76,20 @@ _Avoid_: time slot
 A daily self-rating of energy and focus on a logical day, with finite scores from 1 to 10. One entry per date; the last valid entry wins.
 _Avoid_: check-in, mood log, rating
 
+### Spacing
+
+**Spacing Rule**:
+A standing minimum interval between two Supplements, measured in whole hours. It is symmetric, and it always links two different Supplements.
+_Avoid_: gap rule, spacing, interval rule, cooldown
+
+**Spacing Adjustment**:
+The later time a pending Scheduled Dose may be taken, when its own slot falls inside the forbidden window around a linked dose's Actual Intake Time. It belongs to one Logical Day and never changes the base Schedule.
+_Avoid_: reschedule, override, delay, shift
+
+**Spacing Conflict**:
+A Scheduled Dose that cannot satisfy the Spacing Rule it is part of: the linked dose was taken inside the forbidden window, or no time is left in the Logical Day. The Dose Logs behind it are never rewritten.
+_Avoid_: violation, error, breach, warning
+
 ### Inventory
 
 **Inventory**:

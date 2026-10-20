@@ -12,18 +12,21 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useTimeFormat } from "@/lib/app-context"
+import { useAppState, useTimeFormat } from "@/lib/app-context"
 import {
   isRecordableIntakeTime,
   normalizeTimeOfDay,
   today,
   type CalendarDate,
 } from "@/lib/day-regimen"
+import { findSpacingConflict } from "@/lib/spacing"
 
 type DoseTimeSheetProps = {
   open: boolean
   /** `log` records a first actual time; `correct` edits a recorded one. */
   mode: "log" | "correct"
+  /** The supplement the dose belongs to; a spacing rule is checked against it. */
+  supplementId: string
   logicalDate: CalendarDate
   scheduledTime: string
   initialTime: string
@@ -39,6 +42,7 @@ const TITLES = {
 export function DoseTimeSheet({
   open,
   mode,
+  supplementId,
   logicalDate,
   scheduledTime,
   initialTime,
@@ -50,6 +54,7 @@ export function DoseTimeSheet({
   const [value, setValue] = useState(initialTime)
   const [error, setError] = useState<string | null>(null)
   const { formatTime } = useTimeFormat()
+  const { supplements, doseLogs, spacingRules } = useAppState()
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -66,6 +71,26 @@ export function DoseTimeSheet({
     }
     if (!isRecordableIntakeTime(logicalDate, normalized)) {
       setError("Enter a time that is not in the future.")
+      return
+    }
+
+    // The spacing rule is a UI-seam check, as the future-time check is: the
+    // write model records the time and never rewrites history.
+    const conflict = findSpacingConflict(
+      { supplements, doseLogs, spacingRules },
+      { supplementId, logicalDate, takenAt: normalized },
+    )
+    if (conflict) {
+      const partnerName =
+        supplements.find(
+          (supplement) => supplement.id === conflict.partnerSupplementId,
+        )?.name ?? "the linked supplement"
+
+      setError(
+        conflict.earliestSafeTime
+          ? `Too close to ${partnerName}. The earliest safe time is ${formatTime(conflict.earliestSafeTime)}.`
+          : `Too close to ${partnerName}. No safe time is left in this day.`,
+      )
       return
     }
 

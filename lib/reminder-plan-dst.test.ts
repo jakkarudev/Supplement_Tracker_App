@@ -39,7 +39,7 @@ afterAll(() => {
 describe("planReminders across DST transitions", () => {
   it("rolls a nonexistent spring-forward time forward", () => {
     const now = new Date(2026, 2, 7, 6, 0, 0) // Saturday 06:00 EST
-    const plan = planReminders({ supplements: [supplement], doseLogs: [] }, now)
+    const plan = planReminders({ supplements: [supplement], doseLogs: [], spacingRules: [] }, now)
     const reminder = plan.find((item) => item.date === "2026-03-07" && item.time === "02:30")
 
     // 02:30 does not exist on 2026-03-08; the local clock lands on 03:30 EDT.
@@ -48,7 +48,7 @@ describe("planReminders across DST transitions", () => {
 
   it("resolves an ambiguous fall-back time to its first occurrence", () => {
     const now = new Date(2026, 9, 31, 6, 0, 0) // Saturday 06:00 EDT
-    const plan = planReminders({ supplements: [supplement], doseLogs: [] }, now)
+    const plan = planReminders({ supplements: [supplement], doseLogs: [], spacingRules: [] }, now)
     const reminder = plan.find((item) => item.date === "2026-10-31" && item.time === "01:30")
 
     // 01:30 occurs twice on 2026-11-01; the first is still EDT.
@@ -57,7 +57,7 @@ describe("planReminders across DST transitions", () => {
 
   it("keeps a 05:00 dose on the physical date of its logical day", () => {
     const springNow = new Date(2026, 2, 7, 6, 0, 0)
-    const springPlan = planReminders({ supplements: [supplement], doseLogs: [] }, springNow)
+    const springPlan = planReminders({ supplements: [supplement], doseLogs: [], spacingRules: [] }, springNow)
     const springReminder = springPlan.find(
       (item) => item.date === "2026-03-08" && item.time === "05:00",
     )
@@ -66,7 +66,7 @@ describe("planReminders across DST transitions", () => {
     expect(springReminder?.at.toISOString()).toBe("2026-03-08T09:00:00.000Z")
 
     const fallNow = new Date(2026, 9, 31, 6, 0, 0)
-    const fallPlan = planReminders({ supplements: [supplement], doseLogs: [] }, fallNow)
+    const fallPlan = planReminders({ supplements: [supplement], doseLogs: [], spacingRules: [] }, fallNow)
     const fallReminder = fallPlan.find(
       (item) => item.date === "2026-11-01" && item.time === "05:00",
     )

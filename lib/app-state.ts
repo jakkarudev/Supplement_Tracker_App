@@ -1,4 +1,4 @@
-import type { DoseLog, Supplement, WellnessLog } from "./supplements-data"
+import type { DoseLog, SpacingRule, Supplement, WellnessLog } from "./supplements-data"
 import type { TimeFormat } from "./day-regimen"
 
 /** The user's display preferences. */
@@ -14,5 +14,6 @@ export type AppState = {
   supplements: Supplement[]
   doseLogs: DoseLog[]
   wellnessLogs: WellnessLog[]
+  spacingRules: SpacingRule[]
   settings: Settings
 }

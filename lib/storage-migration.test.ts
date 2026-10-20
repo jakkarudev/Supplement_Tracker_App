@@ -52,8 +52,8 @@ const canonicalDoseLog = {
   status: "taken",
 }
 
-const NO_DROPS = { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
-const NO_REPAIRS = { supplements: 0, doseLogs: 0, wellnessLogs: 0, settings: 0 }
+const NO_DROPS = { supplements: 0, doseLogs: 0, wellnessLogs: 0, spacingRules: 0 }
+const NO_REPAIRS = { supplements: 0, doseLogs: 0, wellnessLogs: 0, spacingRules: 0, settings: 0 }
 
 const historicalSample = {
   id: "vit-d3",
@@ -104,18 +104,20 @@ describe("migrateStoredAppState", () => {
         supplements: [canonicalSupplement],
         doseLogs: [canonicalDoseLog],
         wellnessLogs: [],
+        spacingRules: [],
         settings: { timeFormat: "12h" },
       },
     })
   })
 
-  it("does not report a migration for canonical version 3 data", () => {
+  it("does not report a migration for canonical version 4 data", () => {
     const result = migrateStoredAppState({
-      schemaVersion: 3,
+      schemaVersion: 4,
       settings: { timeFormat: "12h" },
       supplements: [canonicalSupplement],
       doseLogs: [canonicalDoseLog],
       wellnessLogs: [],
+      spacingRules: [],
     })
 
     expect(result).toEqual({
@@ -127,9 +129,53 @@ describe("migrateStoredAppState", () => {
         supplements: [canonicalSupplement],
         doseLogs: [canonicalDoseLog],
         wellnessLogs: [],
+        spacingRules: [],
         settings: { timeFormat: "12h" },
       },
     })
+  })
+
+  it("adds an empty spacing rule collection when migrating version 3 data", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 3,
+        settings: { timeFormat: "12h" },
+        supplements: [canonicalSupplement],
+        doseLogs: [canonicalDoseLog],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.migratedFrom).toBe(3)
+    expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.repaired).toEqual(NO_REPAIRS)
+    expect(result.state.spacingRules).toEqual([])
+  })
+
+  it("keeps an existing spacing rule collection when migrating version 3 data", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 3,
+        settings: { timeFormat: "12h" },
+        supplements: [
+          { ...canonicalSupplement, id: "copper" },
+          { ...canonicalSupplement, id: "zinc" },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+        spacingRules: [
+          {
+            id: "rule-1",
+            supplementAId: "copper",
+            supplementBId: "zinc",
+            minimumIntervalMinutes: 240,
+          },
+        ],
+      }),
+    )
+
+    expect(result.migratedFrom).toBe(3)
+    expect(result.state.spacingRules).toHaveLength(1)
   })
 
   it("migrates version 1 logs without an actual time unchanged", () => {
@@ -149,6 +195,7 @@ describe("migrateStoredAppState", () => {
         supplements: [canonicalSupplement],
         doseLogs: [canonicalDoseLog],
         wellnessLogs: [],
+        spacingRules: [],
         settings: { timeFormat: "12h" },
       },
     })
@@ -191,7 +238,7 @@ describe("migrateStoredAppState", () => {
   it("repairs a missing time format to 12-hour and counts the repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         supplements: [],
         doseLogs: [],
         wellnessLogs: [],
@@ -207,7 +254,7 @@ describe("migrateStoredAppState", () => {
   it("counts a missing settings object as a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         supplements: [],
         doseLogs: [],
         wellnessLogs: [],
@@ -222,7 +269,7 @@ describe("migrateStoredAppState", () => {
   it("keeps a stored 24-hour time format without counting a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         supplements: [],
         doseLogs: [],
         wellnessLogs: [],
@@ -238,7 +285,7 @@ describe("migrateStoredAppState", () => {
   it("ignores unknown keys inside a stored settings object without counting them", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         supplements: [],
         doseLogs: [],
         wellnessLogs: [],
@@ -339,7 +386,7 @@ describe("migrateStoredAppState", () => {
   it("counts filtered, duplicated, and 12-hour stored times as one repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           { ...canonicalSupplement, times: ["noon", "08:00 PM", "20:00", "20:00"] },
@@ -356,7 +403,7 @@ describe("migrateStoredAppState", () => {
   it("counts dropped records per collection", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           canonicalSupplement,
@@ -388,6 +435,7 @@ describe("migrateStoredAppState", () => {
       supplements: 2,
       doseLogs: 1,
       wellnessLogs: 5,
+      spacingRules: 0,
     })
     expect(result.state.supplements).toEqual([canonicalSupplement])
     expect(result.state.doseLogs).toEqual([canonicalDoseLog])
@@ -408,7 +456,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [canonicalSupplement, ...invalidSupplements],
         doseLogs: [],
@@ -427,7 +475,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [canonicalSupplement, ...invalidSupplements],
         doseLogs: [],
@@ -456,7 +504,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [canonicalSupplement, ...invalidSupplements],
         doseLogs: [],
@@ -481,7 +529,7 @@ describe("migrateStoredAppState", () => {
 
     const canonical = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [{ ...canonicalSupplement, startedOn: undefined }],
         doseLogs: [],
@@ -506,7 +554,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [canonicalSupplement, ...invalidSupplements],
         doseLogs: [],
@@ -523,7 +571,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [schedulelessSupplement],
         doseLogs: [],
@@ -536,7 +584,7 @@ describe("migrateStoredAppState", () => {
     expect(result.state.supplements).toEqual([schedulelessSupplement])
 
     const again = expectOk(
-      migrateStoredAppState({ schemaVersion: 3, ...result.state }),
+      migrateStoredAppState({ schemaVersion: 4, ...result.state }),
     )
     expect(again.dropped).toEqual(NO_DROPS)
     expect(again.repaired).toEqual(NO_REPAIRS)
@@ -546,7 +594,7 @@ describe("migrateStoredAppState", () => {
   it("filters stored days to integers 0–6 and dedupes them", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           { ...canonicalSupplement, days: [1, 7, 7, 2.5, "3", null, -1, 0, 6] },
@@ -560,6 +608,7 @@ describe("migrateStoredAppState", () => {
       supplements: 1,
       doseLogs: 0,
       wellnessLogs: 0,
+      spacingRules: 0,
       settings: 0,
     })
     expect(result.state.supplements[0].days).toEqual([1, 0, 6])
@@ -568,7 +617,7 @@ describe("migrateStoredAppState", () => {
   it("dedupes stored days without reordering them", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [{ ...canonicalSupplement, days: [3, 1, 3] }],
         doseLogs: [],
@@ -583,7 +632,7 @@ describe("migrateStoredAppState", () => {
   it("replaces non-string text fields with their defaults", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           {
@@ -615,7 +664,7 @@ describe("migrateStoredAppState", () => {
     for (const restockReminder of [null, 0, "yes", {}, []]) {
       const result = expectOk(
         migrateStoredAppState({
-          schemaVersion: 3,
+          schemaVersion: 4,
           settings: { timeFormat: "12h" },
           supplements: [{ ...canonicalSupplement, restockReminder }],
           doseLogs: [],
@@ -631,7 +680,7 @@ describe("migrateStoredAppState", () => {
   it("keeps a stored false restock reminder as-is", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [{ ...canonicalSupplement, restockReminder: false }],
         doseLogs: [],
@@ -646,7 +695,7 @@ describe("migrateStoredAppState", () => {
   it("coerces numeric-string counts and thresholds", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           { ...canonicalSupplement, totalCount: "60", currentCount: "44", restockThreshold: "15" },
@@ -667,7 +716,7 @@ describe("migrateStoredAppState", () => {
   it("coerces numeric-string durations and cycle fields, counting the rewrite", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           {
@@ -694,7 +743,7 @@ describe("migrateStoredAppState", () => {
     for (const stored of [0, -5, null, "banana"]) {
       const result = expectOk(
         migrateStoredAppState({
-          schemaVersion: 3,
+          schemaVersion: 4,
           settings: { timeFormat: "12h" },
           supplements: [
             {
@@ -719,7 +768,7 @@ describe("migrateStoredAppState", () => {
   it("keeps valid numeric durations and cycle fields without counting a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           {
@@ -754,7 +803,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [minimalSupplement],
         doseLogs: [],
@@ -774,7 +823,7 @@ describe("migrateStoredAppState", () => {
   it("falls back to today's defaults for non-numeric counts and thresholds", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           {
@@ -800,7 +849,7 @@ describe("migrateStoredAppState", () => {
   it("falls back to defaults for non-finite count values", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           {
@@ -826,7 +875,7 @@ describe("migrateStoredAppState", () => {
   it("preserves finite negative counts and thresholds, counting no repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [
           { ...canonicalSupplement, totalCount: -5, currentCount: -3, restockThreshold: -1 },
@@ -856,7 +905,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [minimalSupplement],
         doseLogs: [],
@@ -901,7 +950,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [canonicalSupplement, messySupplement],
         doseLogs: [],
@@ -913,6 +962,7 @@ describe("migrateStoredAppState", () => {
       supplements: 1,
       doseLogs: 0,
       wellnessLogs: 0,
+      spacingRules: 0,
       settings: 0,
     })
     expect(result.state.supplements).toHaveLength(2)
@@ -928,7 +978,7 @@ describe("migrateStoredAppState", () => {
 
   it("leaves nothing to repair after a repaired load is normalized again", () => {
     const raw = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       settings: { timeFormat: "12h" },
       supplements: [
         { ...canonicalSupplement, days: [1, 7, 7], brand: 5, totalCount: "60" },
@@ -942,10 +992,11 @@ describe("migrateStoredAppState", () => {
       supplements: 1,
       doseLogs: 1,
       wellnessLogs: 0,
+      spacingRules: 0,
       settings: 0,
     })
 
-    const second = expectOk(migrateStoredAppState({ schemaVersion: 3, ...first.state }))
+    const second = expectOk(migrateStoredAppState({ schemaVersion: 4, ...first.state }))
     expect(second.repaired).toEqual(NO_REPAIRS)
     expect(second.state).toEqual(first.state)
   })
@@ -953,7 +1004,7 @@ describe("migrateStoredAppState", () => {
   it("keeps the last valid wellness entry per date without counting superseded duplicates as drops", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [],
         doseLogs: [],
@@ -976,7 +1027,7 @@ describe("migrateStoredAppState", () => {
   it("preserves recorded inventory amounts on taken logs only", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [canonicalSupplement],
         doseLogs: [
@@ -1019,7 +1070,7 @@ describe("migrateStoredAppState", () => {
   it("keeps a valid actual time on taken logs and leaves absence unrepaired", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [],
         doseLogs: [
@@ -1039,7 +1090,7 @@ describe("migrateStoredAppState", () => {
   it("strips an actual time from snoozed and pending logs, counting repairs", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [],
         doseLogs: [
@@ -1055,6 +1106,7 @@ describe("migrateStoredAppState", () => {
       supplements: 0,
       doseLogs: 2,
       wellnessLogs: 0,
+      spacingRules: 0,
       settings: 0,
     })
     for (const log of result.state.doseLogs) {
@@ -1065,7 +1117,7 @@ describe("migrateStoredAppState", () => {
   it("strips an invalid actual time from a taken log, counting a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [],
         doseLogs: [{ ...canonicalDoseLog, takenAt: "noon" }],
@@ -1081,7 +1133,7 @@ describe("migrateStoredAppState", () => {
   it("normalizes a 12-hour actual time and counts the rewrite", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [],
         doseLogs: [{ ...canonicalDoseLog, takenAt: "10:12 AM" }],
@@ -1096,7 +1148,7 @@ describe("migrateStoredAppState", () => {
   it("counts a 12-hour dose-log time rewrite as a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [],
         doseLogs: [{ ...canonicalDoseLog, time: "08:00 PM" }],
@@ -1108,6 +1160,7 @@ describe("migrateStoredAppState", () => {
       supplements: 0,
       doseLogs: 1,
       wellnessLogs: 0,
+      spacingRules: 0,
       settings: 0,
     })
     expect(result.state.doseLogs[0].time).toBe("20:00")
@@ -1116,7 +1169,7 @@ describe("migrateStoredAppState", () => {
   it("counts an inventory amount stripped from a log that may not carry one as a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [],
         doseLogs: [
@@ -1140,7 +1193,7 @@ describe("migrateStoredAppState", () => {
   it("counts each wellness entry that supersedes a stored date as a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [],
         doseLogs: [],
@@ -1175,7 +1228,7 @@ describe("migrateStoredAppState", () => {
   it("preserves an annotated historical sample stored under the current version", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 3,
+        schemaVersion: 4,
         settings: { timeFormat: "12h" },
         supplements: [{ ...historicalSample, startedOn: "1970-01-01" }],
         doseLogs: [],
@@ -1190,7 +1243,7 @@ describe("migrateStoredAppState", () => {
 
   it("is idempotent for already-canonical state", () => {
     const canonicalState = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       settings: { timeFormat: "12h" },
       supplements: [canonicalSupplement],
       doseLogs: [
@@ -1214,6 +1267,7 @@ describe("migrateStoredAppState", () => {
       supplements: [canonicalSupplement],
       doseLogs: canonicalState.doseLogs,
       wellnessLogs: canonicalState.wellnessLogs,
+      spacingRules: [],
       settings: { timeFormat: "12h" },
     })
 
@@ -1227,6 +1281,7 @@ describe("migrateStoredAppState", () => {
       supplements: [canonicalSupplement],
       doseLogs: [canonicalDoseLog],
       wellnessLogs: [{ date: "2026-05-01", energy: 7, focus: 8 }],
+      spacingRules: [],
       settings: { timeFormat: "12h" },
     }
 
@@ -1235,7 +1290,7 @@ describe("migrateStoredAppState", () => {
     expect(first.dropped).toEqual(NO_DROPS)
     expect(first.state).toEqual(canonicalState)
 
-    const second = expectOk(migrateStoredAppState({ schemaVersion: 3, ...first.state }))
+    const second = expectOk(migrateStoredAppState({ schemaVersion: 4, ...first.state }))
     expect(second.migratedFrom).toBeNull()
     expect(second.state).toEqual(first.state)
   })
@@ -1245,14 +1300,14 @@ describe("dropped-record helpers", () => {
   it("totals drops across every collection", () => {
     expect(totalDroppedRecords(NO_DROPS)).toBe(0)
     expect(
-      totalDroppedRecords({ supplements: 1, doseLogs: 2, wellnessLogs: 3 }),
+      totalDroppedRecords({ supplements: 1, doseLogs: 2, wellnessLogs: 3, spacingRules: 0 }),
     ).toBe(6)
   })
 
   it("detects whether any collection dropped a record", () => {
     expect(hasDroppedRecords(NO_DROPS)).toBe(false)
     expect(
-      hasDroppedRecords({ supplements: 0, doseLogs: 1, wellnessLogs: 0 }),
+      hasDroppedRecords({ supplements: 0, doseLogs: 1, wellnessLogs: 0, spacingRules: 0 }),
     ).toBe(true)
   })
 })
@@ -1265,6 +1320,7 @@ describe("repaired-record helpers", () => {
         supplements: 1,
         doseLogs: 2,
         wellnessLogs: 3,
+        spacingRules: 0,
         settings: 0,
       }),
     ).toBe(6)
@@ -1276,6 +1332,7 @@ describe("repaired-record helpers", () => {
         supplements: 0,
         doseLogs: 0,
         wellnessLogs: 0,
+        spacingRules: 0,
         settings: 1,
       }),
     ).toBe(0)
@@ -1288,6 +1345,7 @@ describe("repaired-record helpers", () => {
         supplements: 2,
         doseLogs: 0,
         wellnessLogs: 0,
+        spacingRules: 0,
         settings: 1,
       }),
     ).toBe(1)
@@ -1300,6 +1358,7 @@ describe("repaired-record helpers", () => {
         supplements: 0,
         doseLogs: 1,
         wellnessLogs: 0,
+        spacingRules: 0,
         settings: 0,
       }),
     ).toBe(true)
@@ -1311,9 +1370,210 @@ describe("repaired-record helpers", () => {
         supplements: 0,
         doseLogs: 0,
         wellnessLogs: 0,
+        spacingRules: 0,
         settings: 1,
       }),
     ).toBe(true)
+  })
+})
+
+describe("spacing rule validation", () => {
+  function migrateWithRules(spacingRules: unknown[]) {
+    return expectOk(
+      migrateStoredAppState({
+        schemaVersion: 4,
+        settings: { timeFormat: "12h" },
+        supplements: [
+          { ...canonicalSupplement, id: "copper" },
+          { ...canonicalSupplement, id: "zinc" },
+        ],
+        doseLogs: [],
+        wellnessLogs: [],
+        spacingRules,
+      }),
+    )
+  }
+
+  it("keeps a valid spacing rule", () => {
+    const result = migrateWithRules([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+
+    expect(result.state.spacingRules).toEqual([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+    expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.repaired).toEqual(NO_REPAIRS)
+  })
+
+  it("drops a rule with an empty id and counts it", () => {
+    const result = migrateWithRules([
+      {
+        id: "",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+
+    expect(result.state.spacingRules).toEqual([])
+    expect(result.dropped.spacingRules).toBe(1)
+  })
+
+  it("drops a rule with a missing side and counts it", () => {
+    const result = migrateWithRules([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+
+    expect(result.state.spacingRules).toEqual([])
+    expect(result.dropped.spacingRules).toBe(1)
+  })
+
+  it("drops a rule whose two sides are the same supplement and counts it", () => {
+    const result = migrateWithRules([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "copper",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+
+    expect(result.state.spacingRules).toEqual([])
+    expect(result.dropped.spacingRules).toBe(1)
+  })
+
+  it.each([0, -60, 1.5, "240"])(
+    "drops a rule whose interval is %s and counts it",
+    (minimumIntervalMinutes) => {
+      const result = migrateWithRules([
+        {
+          id: "rule-1",
+          supplementAId: "copper",
+          supplementBId: "zinc",
+          minimumIntervalMinutes,
+        },
+      ])
+
+      expect(result.state.spacingRules).toEqual([])
+      expect(result.dropped.spacingRules).toBe(1)
+    },
+  )
+
+  it.each([90, 150, 30])(
+    "drops a rule whose interval of %s minutes is not a whole number of hours and counts it",
+    (minimumIntervalMinutes) => {
+      const result = migrateWithRules([
+        {
+          id: "rule-1",
+          supplementAId: "copper",
+          supplementBId: "zinc",
+          minimumIntervalMinutes,
+        },
+      ])
+
+      expect(result.state.spacingRules).toEqual([])
+      expect(result.dropped.spacingRules).toBe(1)
+    },
+  )
+
+  it("drops a second rule for the same pair and counts it", () => {
+    const result = migrateWithRules([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+      {
+        id: "rule-2",
+        supplementAId: "zinc",
+        supplementBId: "copper",
+        minimumIntervalMinutes: 360,
+      },
+    ])
+
+    expect(result.state.spacingRules).toEqual([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+    expect(result.dropped.spacingRules).toBe(1)
+  })
+
+  it("drops a rule naming a supplement that does not exist and counts it", () => {
+    const result = migrateWithRules([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "magnesium",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+
+    expect(result.state.spacingRules).toEqual([])
+    expect(result.dropped.spacingRules).toBe(1)
+  })
+
+  it("drops a rule whose supplement was itself dropped and counts it", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 4,
+        settings: { timeFormat: "12h" },
+        supplements: [{ ...canonicalSupplement, id: "copper" }],
+        doseLogs: [],
+        wellnessLogs: [],
+        spacingRules: [
+          {
+            id: "rule-1",
+            supplementAId: "copper",
+            supplementBId: "zinc",
+            minimumIntervalMinutes: 240,
+          },
+        ],
+      }),
+    )
+
+    expect(result.state.spacingRules).toEqual([])
+    expect(result.dropped.spacingRules).toBe(1)
+  })
+
+  it("keeps the valid rules and counts only the invalid ones", () => {
+    const result = migrateWithRules([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+      {
+        id: "",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+
+    expect(result.state.spacingRules).toHaveLength(1)
+    expect(result.dropped.spacingRules).toBe(1)
   })
 })
 

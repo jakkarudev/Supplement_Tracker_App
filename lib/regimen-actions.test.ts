@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest"
-import type { DoseLog, Supplement } from "./supplements-data"
+import type { DoseLog, SpacingRule, Supplement } from "./supplements-data"
 import {
+  addSpacingRule,
   addSupplement,
+  deleteSpacingRule,
   deleteSupplement,
   logDose,
+  updateSpacingRule,
   updateSupplement,
   type RegimenState,
 } from "./regimen-actions"
@@ -31,7 +34,14 @@ function makeSupplement(overrides: Partial<Supplement> = {}): Supplement {
 }
 
 function makeState(overrides: Partial<RegimenState> = {}): RegimenState {
-  return { supplements: [makeSupplement()], doseLogs: [], ...overrides }
+  return { supplements: [makeSupplement()], doseLogs: [], spacingRules: [], ...overrides }
+}
+
+const RULE: SpacingRule = {
+  id: "rule-1",
+  supplementAId: "magnesium",
+  supplementBId: "omega-3",
+  minimumIntervalMinutes: 240,
 }
 
 function takenLog(overrides: Partial<DoseLog> = {}): DoseLog {
@@ -85,7 +95,81 @@ describe("supplement writes", () => {
   })
 })
 
+describe("spacing rule writes", () => {
+  it("appends a spacing rule without touching anything else", () => {
+    const state = makeState({
+      supplements: [makeSupplement(), makeSupplement({ id: "omega-3" })],
+      doseLogs: [takenLog()],
+    })
+
+    const next = addSpacingRule(state, RULE)
+
+    expect(next.spacingRules).toEqual([RULE])
+    expect(next.supplements).toEqual(state.supplements)
+    expect(next.doseLogs).toEqual(state.doseLogs)
+  })
+
+  it("replaces a spacing rule by id", () => {
+    const state = makeState({ spacingRules: [RULE] })
+
+    const next = updateSpacingRule(state, { ...RULE, minimumIntervalMinutes: 360 })
+
+    expect(next.spacingRules).toEqual([{ ...RULE, minimumIntervalMinutes: 360 }])
+  })
+
+  it("leaves the other rules alone when one is replaced", () => {
+    const other: SpacingRule = {
+      id: "rule-2",
+      supplementAId: "magnesium",
+      supplementBId: "zinc",
+      minimumIntervalMinutes: 120,
+    }
+    const state = makeState({ spacingRules: [RULE, other] })
+
+    const next = updateSpacingRule(state, { ...RULE, minimumIntervalMinutes: 360 })
+
+    expect(next.spacingRules).toEqual([{ ...RULE, minimumIntervalMinutes: 360 }, other])
+  })
+
+  it("removes a spacing rule by id", () => {
+    const other: SpacingRule = {
+      id: "rule-2",
+      supplementAId: "magnesium",
+      supplementBId: "zinc",
+      minimumIntervalMinutes: 120,
+    }
+    const state = makeState({ spacingRules: [RULE, other] })
+
+    const next = deleteSpacingRule(state, "rule-1")
+
+    expect(next.spacingRules).toEqual([other])
+  })
+
+  it("removes the rules that involve a deleted supplement", () => {
+    const other: SpacingRule = {
+      id: "rule-2",
+      supplementAId: "omega-3",
+      supplementBId: "zinc",
+      minimumIntervalMinutes: 120,
+    }
+    const state = makeState({
+      supplements: [makeSupplement(), makeSupplement({ id: "omega-3" })],
+      spacingRules: [RULE, other],
+    })
+
+    const next = deleteSupplement(state, "magnesium")
+
+    expect(next.spacingRules).toEqual([other])
+  })
+})
+
 describe("logDose", () => {
+  it("owns only the supplements and the dose logs", () => {
+    const next = logDose(makeState({ spacingRules: [RULE] }), logInput("taken"))
+
+    expect(Object.keys(next).sort()).toEqual(["doseLogs", "supplements"])
+  })
+
   it("records a taken dose and consumes the dosage amount", () => {
     const next = logDose(makeState(), logInput("taken"))
 
@@ -188,7 +272,10 @@ describe("logDose", () => {
     const state = makeState()
     const next = logDose(state, logInput("pending"))
 
-    expect(next).toEqual(state)
+    expect(next).toEqual({
+      supplements: state.supplements,
+      doseLogs: state.doseLogs,
+    })
   })
 
   it("consumes fractional dosage amounts", () => {
@@ -201,7 +288,10 @@ describe("logDose", () => {
   })
 
   it("restores the amount recorded when taken, not the current dosage", () => {
-    const taken = logDose(makeState(), logInput("taken"))
+    // The dose log write model owns the supplements and the dose logs, so the
+    // state is spread the way the reducer spreads it.
+    const state = makeState()
+    const taken = { ...state, ...logDose(state, logInput("taken")) }
     const edited = updateSupplement(taken, makeSupplement({ dosage: "1 capsule", currentCount: 8 }))
 
     const snoozed = logDose(edited, logInput("snoozed"))

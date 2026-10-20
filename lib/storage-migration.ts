@@ -2,6 +2,7 @@ import {
   SUPPLEMENT_FORMS,
   type DoseLog,
   type DoseStatus,
+  type SpacingRule,
   type Supplement,
   type SupplementForm,
   type WellnessLog,
@@ -12,10 +13,11 @@ import { isCalendarDate, normalizeTimeList, normalizeTimeOfDay } from "./day-reg
 
 type StoredPayload = Record<string, unknown>
 
-export const CURRENT_SCHEMA_VERSION = 3
+export const CURRENT_SCHEMA_VERSION = 4
 
 const LEGACY_STARTED_ON = "1970-01-01"
 const DOSE_STATUSES: readonly DoseStatus[] = ["taken", "pending", "snoozed"]
+const MINUTES_PER_HOUR = 60
 
 export type SchemaVersionDetection =
   | { status: "ok"; version: number }
@@ -48,6 +50,7 @@ export type CollectionRecordCounts = {
   supplements: number
   doseLogs: number
   wellnessLogs: number
+  spacingRules: number
 }
 
 /** How many records of each collection validation dropped. */
@@ -64,7 +67,12 @@ export type RepairedRecordCounts = CollectionRecordCounts & {
 
 /** The total number of records counted across every collection. */
 function totalRecords(counts: CollectionRecordCounts): number {
-  return counts.supplements + counts.doseLogs + counts.wellnessLogs
+  return (
+    counts.supplements +
+    counts.doseLogs +
+    counts.wellnessLogs +
+    counts.spacingRules
+  )
 }
 
 /** The total number of records dropped across every collection. */
@@ -374,6 +382,46 @@ function storedDoseLogs(payload: StoredPayload): unknown[] {
   return []
 }
 
+/**
+ * Validates a stored spacing rule. A rule links two different Supplements
+ * that both still exist, and carries a positive whole number of hours. A
+ * rule that fails any of those checks cannot be honoured, so it is dropped
+ * rather than repaired into something the user never chose.
+ */
+function normalizeSpacingRule(
+  value: unknown,
+  supplementIds: Set<string>,
+): SpacingRule | null {
+  if (!isRecord(value)) return null
+
+  const { id, supplementAId, supplementBId, minimumIntervalMinutes } = value
+  if (typeof id !== "string" || id.length === 0) return null
+  if (typeof supplementAId !== "string" || supplementAId.length === 0) return null
+  if (typeof supplementBId !== "string" || supplementBId.length === 0) return null
+  if (supplementAId === supplementBId) return null
+  if (!supplementIds.has(supplementAId) || !supplementIds.has(supplementBId)) return null
+  if (
+    typeof minimumIntervalMinutes !== "number" ||
+    !Number.isInteger(minimumIntervalMinutes) ||
+    minimumIntervalMinutes <= 0
+  ) {
+    return null
+  }
+  // A Spacing Rule is measured in whole hours, so a fraction of an hour is
+  // not a rule the app can honour.
+  if (minimumIntervalMinutes % MINUTES_PER_HOUR !== 0) return null
+
+  return { id, supplementAId, supplementBId, minimumIntervalMinutes }
+}
+
+/**
+ * The identity of a rule's unordered pair. A rule is symmetric, so A → B and
+ * B → A are the same rule.
+ */
+function spacingPairKey(rule: SpacingRule): string {
+  return [rule.supplementAId, rule.supplementBId].sort().join("|")
+}
+
 /** Validates and salvages the collections of a canonical-shaped payload. */
 function normalizeStoredState(payload: StoredPayload): {
   state: AppState
@@ -382,28 +430,49 @@ function normalizeStoredState(payload: StoredPayload): {
 } {
   const rawDoseLogs = storedDoseLogs(payload)
   const rawSupplements = Array.isArray(payload.supplements) ? payload.supplements : []
+  const rawSpacingRules = Array.isArray(payload.spacingRules) ? payload.spacingRules : []
 
   const supplements = normalizeRecords(rawSupplements, normalizeSupplement)
   const doseLogs = normalizeRecords(rawDoseLogs, normalizeDoseLog)
   const wellnessLogs = normalizeWellnessLogs(payload.wellnessLogs)
   const settings = normalizeSettings(payload.settings)
 
+  // A rule can only be honoured when both of its supplements survived
+  // validation, so it is judged against the loaded supplements.
+  const supplementIds = new Set(supplements.records.map((supplement) => supplement.id))
+  // A rule is symmetric, so a pair carries one rule: a second rule for the
+  // same pair is dropped and counted.
+  const seenPairs = new Set<string>()
+  const spacingRules = normalizeRecords(rawSpacingRules, (value) => {
+    const rule = normalizeSpacingRule(value, supplementIds)
+    if (rule === null) return null
+
+    const pair = spacingPairKey(rule)
+    if (seenPairs.has(pair)) return null
+    seenPairs.add(pair)
+
+    return { record: rule, repaired: false }
+  })
+
   return {
     state: {
       supplements: supplements.records,
       doseLogs: doseLogs.records,
       wellnessLogs: wellnessLogs.records,
+      spacingRules: spacingRules.records,
       settings: settings.settings,
     },
     dropped: {
       supplements: supplements.dropped,
       doseLogs: doseLogs.dropped,
       wellnessLogs: wellnessLogs.dropped,
+      spacingRules: spacingRules.dropped,
     },
     repaired: {
       supplements: supplements.repaired,
       doseLogs: doseLogs.repaired,
       wellnessLogs: wellnessLogs.repaired,
+      spacingRules: spacingRules.repaired,
       settings: settings.repaired ? 1 : 0,
     },
   }
@@ -478,10 +547,24 @@ function migrateV2ToV3(payload: StoredPayload): StoredPayload {
   }
 }
 
+/**
+ * Version 3 → 4 adds the `spacingRules` collection with an empty list. A
+ * payload that already carries rules keeps them, so the step transforms
+ * nothing: an absent rule list is valid and must not be given invented rules.
+ */
+function migrateV3ToV4(payload: StoredPayload): StoredPayload {
+  return {
+    ...payload,
+    schemaVersion: 4,
+    spacingRules: Array.isArray(payload.spacingRules) ? payload.spacingRules : [],
+  }
+}
+
 const MIGRATION_STEPS: readonly MigrationStep[] = [
   migrateV0ToV1,
   migrateV1ToV2,
   migrateV2ToV3,
+  migrateV3ToV4,
 ]
 
 function runMigrationSteps(payload: StoredPayload, fromVersion: number): StoredPayload {

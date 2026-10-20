@@ -19,6 +19,7 @@ function stateWith(timeFormat: "12h" | "24h"): AppState {
     supplements: [],
     doseLogs: [],
     wellnessLogs: [],
+    spacingRules: [],
     settings: { timeFormat },
   }
 }

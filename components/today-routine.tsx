@@ -11,12 +11,14 @@ import type { DoseStatus } from "@/lib/supplements-data"
 import {
   dayRegimen,
   formatCalendarDate,
+  isRecordableIntakeTime,
   timeOfDayFrom,
   today,
   type CalendarDate,
   type Period,
   type ScheduledDose,
 } from "@/lib/day-regimen"
+import { buildSpacingPlan, intervalLabel, type SpacingConflict } from "@/lib/spacing"
 import { cn } from "@/lib/utils"
 
 type TimeSheetState = {
@@ -38,7 +40,7 @@ type TodayRoutineProps = {
 }
 
 export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineProps) {
-  const { supplements, doseLogs } = useAppState()
+  const { supplements, doseLogs, spacingRules } = useAppState()
   const dispatch = useAppDispatch()
   const { formatTime } = useTimeFormat()
   const todayDate = today()
@@ -54,6 +56,13 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
     [supplements, doseLogs, selectedDate],
   )
   const doses = regimen.doses
+
+  // The spacing plan says when a dose may actually be taken, and which doses
+  // are part of a conflict the user needs to see.
+  const spacingPlan = useMemo(
+    () => buildSpacingPlan({ supplements, doseLogs, spacingRules }, selectedDate),
+    [supplements, doseLogs, spacingRules, selectedDate],
+  )
 
   const grouped = useMemo(() => {
     const groups = new Map<string, ScheduledDose[]>()
@@ -88,10 +97,19 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
   function openTimeSheet(item: ScheduledDose, mode: TimeSheetState["mode"]) {
     if (!isToday) return
 
+    const entry = spacingPlan[item.key]
+    const adjustedTime = entry?.adjustedTime ?? item.time
+    const adjusted = adjustedTime !== item.time
+
     const initialTime =
       mode === "correct" && item.log?.takenAt
         ? item.log.takenAt
-        : timeOfDayFrom(new Date())
+        : // The adjusted time is the sheet's suggestion, but only once it has
+          // arrived: a default in the future would be refused by the
+          // future-time check before the spacing refusal could say anything.
+          adjusted && isRecordableIntakeTime(item.date, adjustedTime)
+          ? adjustedTime
+          : timeOfDayFrom(new Date())
     setTimeSheet({ dose: item, mode, initialTime })
   }
 
@@ -198,23 +216,39 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
                     </div>
                   </div>
                   <div className="ml-3 space-y-3 border-l border-dashed border-border pl-4 sm:ml-[1.1rem] sm:pl-6">
-                    {items.map((item) => (
-                      <DoseCard
-                        key={item.key}
-                        name={item.supplement.name}
-                        brand={item.supplement.brand}
-                        potency={item.supplement.potency}
-                        dosage={item.supplement.dosage}
-                        status={item.status}
-                        takenAt={item.log?.takenAt}
-                        readOnly={!isToday}
-                        sliderResetKey={sliderResets[item.key] ?? 0}
-                        onConfirm={() => openTimeSheet(item, "log")}
-                        onSnooze={() => logDose(item, "snoozed")}
-                        onCorrectTime={() => openTimeSheet(item, "correct")}
-                        onUndo={() => logDose(item, "pending")}
-                      />
-                    ))}
+                    {items.map((item) => {
+                      const entry = spacingPlan[item.key]
+                      const adjusted =
+                        entry !== undefined && entry.adjustedTime !== item.time
+                      const conflict = entry?.conflict ?? null
+                      const partnerName =
+                        conflict === null
+                          ? ""
+                          : (supplements.find(
+                              (candidate) => candidate.id === conflict.partnerSupplementId,
+                            )?.name ?? "the linked supplement")
+
+                      return (
+                        <DoseCard
+                          key={item.key}
+                          name={item.supplement.name}
+                          brand={item.supplement.brand}
+                          potency={item.supplement.potency}
+                          dosage={item.supplement.dosage}
+                          status={item.status}
+                          takenAt={item.log?.takenAt}
+                          adjustedTime={adjusted ? entry.adjustedTime : undefined}
+                          conflict={conflict}
+                          partnerName={partnerName}
+                          readOnly={!isToday}
+                          sliderResetKey={sliderResets[item.key] ?? 0}
+                          onConfirm={() => openTimeSheet(item, "log")}
+                          onSnooze={() => logDose(item, "snoozed")}
+                          onCorrectTime={() => openTimeSheet(item, "correct")}
+                          onUndo={() => logDose(item, "pending")}
+                        />
+                      )
+                    })}
                   </div>
                 </section>
               )
@@ -228,6 +262,7 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
           key={`${timeSheet.dose.key}|${timeSheet.mode}`}
           open
           mode={timeSheet.mode}
+          supplementId={timeSheet.dose.supplement.id}
           logicalDate={timeSheet.dose.date}
           scheduledTime={timeSheet.dose.time}
           initialTime={timeSheet.initialTime}
@@ -248,6 +283,11 @@ type DoseCardProps = {
   dosage: string
   status: DoseStatus
   takenAt?: string
+  /** The adjusted time an adjusted pending dose may be taken at the earliest. */
+  adjustedTime?: string
+  conflict?: SpacingConflict | null
+  /** The name of the supplement on the other side of the rule. */
+  partnerName?: string
   readOnly: boolean
   sliderResetKey: number
   onConfirm: () => void
@@ -263,6 +303,9 @@ function DoseCard({
   dosage,
   status,
   takenAt,
+  adjustedTime,
+  conflict = null,
+  partnerName = "",
   readOnly,
   sliderResetKey,
   onConfirm,
@@ -271,6 +314,13 @@ function DoseCard({
   onUndo,
 }: DoseCardProps) {
   const { formatTime } = useTimeFormat()
+
+  const conflictMessage =
+    conflict === null
+      ? null
+      : conflict.kind === "gap-not-met"
+        ? `Spacing conflict — taken less than ${intervalLabel(conflict.minimumIntervalMinutes)} apart from ${partnerName}.`
+        : `Spacing conflict — no time is left in this day for the ${intervalLabel(conflict.minimumIntervalMinutes)} gap from ${partnerName}.`
 
   return (
     <div
@@ -297,6 +347,21 @@ function DoseCard({
           <p className="mt-1 text-xs font-medium text-foreground">{dosage}</p>
         </div>
       </div>
+
+      {adjustedTime && (
+        <p className="mt-3 text-xs font-medium text-primary">
+          Earliest at {formatTime(adjustedTime)}
+        </p>
+      )}
+
+      {conflictMessage !== null && (
+        <p role="alert" className="mt-3 text-xs font-medium text-destructive">
+          {conflictMessage}
+          {conflict?.earliestSafeTime
+            ? ` Earliest safe time ${formatTime(conflict.earliestSafeTime)}.`
+            : ""}
+        </p>
+      )}
 
       {status === "taken" && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

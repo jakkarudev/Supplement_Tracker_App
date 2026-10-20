@@ -36,7 +36,7 @@ const supplement: Supplement = {
 }
 
 const now = new Date(2026, 4, 4, 7, 0, 0)
-const input: ReminderPlanInput = { supplements: [supplement], doseLogs: [] }
+const input: ReminderPlanInput = { supplements: [supplement], doseLogs: [], spacingRules: [] }
 
 function makeDriver() {
   return {
@@ -121,7 +121,7 @@ describe("syncReminders", () => {
     const driver = makeDriver()
     driver.getPending.mockResolvedValue({ notifications: pending })
     const result = await syncReminders(
-      { supplements: [supplement], doseLogs: [makeLog("2026-05-04", "08:00", "taken")] },
+      { supplements: [supplement], doseLogs: [makeLog("2026-05-04", "08:00", "taken")], spacingRules: [] },
       now,
       driver,
     )
@@ -140,7 +140,7 @@ describe("syncReminders", () => {
 
     const driver = makeDriver()
     driver.getPending.mockResolvedValue({ notifications: pending })
-    const result = await syncReminders({ supplements: [renamed], doseLogs: [] }, now, driver)
+    const result = await syncReminders({ supplements: [renamed], doseLogs: [], spacingRules: [] }, now, driver)
     const scheduled = driver.schedule.mock.calls[0][0].notifications
 
     expect(result).toEqual({ status: "synced", scheduled: 30, cancelled: 30 })
@@ -155,11 +155,11 @@ describe("syncReminders", () => {
     const seeded = makeDriver()
     await syncReminders(input, now, seeded)
     const pending = seeded.schedule.mock.calls[0][0].notifications
-    const shifted = { ...supplement, times: ["09:00"] }
+    const adjusted = { ...supplement, times: ["09:00"] }
 
     const driver = makeDriver()
     driver.getPending.mockResolvedValue({ notifications: pending })
-    const result = await syncReminders({ supplements: [shifted], doseLogs: [] }, now, driver)
+    const result = await syncReminders({ supplements: [adjusted], doseLogs: [], spacingRules: [] }, now, driver)
     const scheduled = driver.schedule.mock.calls[0][0].notifications
 
     expect(result).toEqual({ status: "synced", scheduled: 30, cancelled: 30 })
@@ -188,7 +188,7 @@ describe("syncReminders", () => {
       ],
     })
 
-    const result = await syncReminders({ supplements: [], doseLogs: [] }, now, driver)
+    const result = await syncReminders({ supplements: [], doseLogs: [], spacingRules: [] }, now, driver)
 
     expect(result).toEqual({ status: "synced", scheduled: 0, cancelled: 1 })
     expect(driver.cancel).toHaveBeenCalledWith({ notifications: [{ id: 12345 }] })
@@ -221,7 +221,7 @@ describe("syncReminders", () => {
   it("does not create the channel or schedule when the plan is empty", async () => {
     const driver = makeDriver()
 
-    const result = await syncReminders({ supplements: [], doseLogs: [] }, now, driver)
+    const result = await syncReminders({ supplements: [], doseLogs: [], spacingRules: [] }, now, driver)
 
     expect(result).toEqual({ status: "synced", scheduled: 0, cancelled: 0 })
     expect(driver.createChannel).not.toHaveBeenCalled()
@@ -299,9 +299,9 @@ describe("createReminderSyncQueue", () => {
       .mockImplementationOnce(() => first.promise)
       .mockResolvedValueOnce({ status: "synced", scheduled: 2, cancelled: 1 })
     const sync = createReminderSyncQueue(run)
-    const a = { supplements: [], doseLogs: [] }
-    const b = { supplements: [supplement], doseLogs: [] }
-    const c = { supplements: [], doseLogs: [makeLog("2026-05-04", "08:00", "taken")] }
+    const a = { supplements: [], doseLogs: [], spacingRules: [] }
+    const b = { supplements: [supplement], doseLogs: [], spacingRules: [] }
+    const c = { supplements: [], doseLogs: [makeLog("2026-05-04", "08:00", "taken")], spacingRules: [] }
 
     const firstCall = sync(a)
     const secondCall = sync(b)
