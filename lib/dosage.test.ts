@@ -7,6 +7,7 @@ import {
   inventoryUnitPlural,
   isValidDosageAmount,
   parseDosageValueForForm,
+  solidDosageOptionsFor,
 } from "./dosage"
 
 describe("SOLID_DOSAGE_OPTIONS", () => {
@@ -45,6 +46,24 @@ describe("parseDosageValueForForm", () => {
   it("does not turn an unreadable stored dosage into an amount", () => {
     expect(parseDosageValueForForm("Capsule", "some capsules")).toBe("")
   })
+
+  it("keeps a leading-dot decimal amount", () => {
+    expect(parseDosageValueForForm("Liquid", ".5 ml")).toBe(".5")
+    expect(parseDosageValueForForm("Capsule", ".5 capsules")).toBe(".5")
+  })
+})
+
+describe("solidDosageOptionsFor", () => {
+  it("returns the fixed options for a blank or fixed dosage", () => {
+    expect(solidDosageOptionsFor("")).toEqual(SOLID_DOSAGE_OPTIONS)
+    expect(solidDosageOptionsFor("   ")).toEqual(SOLID_DOSAGE_OPTIONS)
+    expect(solidDosageOptionsFor("1/2")).toEqual(SOLID_DOSAGE_OPTIONS)
+  })
+
+  it("appends a stored dosage outside the fixed options", () => {
+    expect(solidDosageOptionsFor("1.5")).toEqual([...SOLID_DOSAGE_OPTIONS, "1.5"])
+    expect(solidDosageOptionsFor("7/8")).toEqual([...SOLID_DOSAGE_OPTIONS, "7/8"])
+  })
 })
 
 describe("isValidDosageAmount", () => {
@@ -52,6 +71,7 @@ describe("isValidDosageAmount", () => {
     expect(isValidDosageAmount("1")).toBe(true)
     expect(isValidDosageAmount("1/2")).toBe(true)
     expect(isValidDosageAmount("1.5")).toBe(true)
+    expect(isValidDosageAmount(".5")).toBe(true)
     expect(isValidDosageAmount("10.25")).toBe(true)
   })
 
