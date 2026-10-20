@@ -41,6 +41,7 @@ import {
 } from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import { buildInventory } from "@/lib/inventory"
+import { joinInventoryForecast } from "@/lib/inventory-forecast"
 import {
   addDays,
   dayRegimen,
@@ -400,12 +401,15 @@ export function useAppDispatch() {
   return useContext(DispatchCtx)
 }
 
-/** Returns the current inventory read model: sorted rows plus summary counts. */
+/** Returns the current inventory read model: sorted rows, forecasts, and summary counts. */
 export function useInventory() {
-  const { supplements } = useAppState()
+  const { supplements, doseLogs } = useAppState()
   const date = today()
 
-  return useMemo(() => buildInventory(supplements, date), [supplements, date])
+  return useMemo(() => {
+    const inventory = buildInventory(supplements, date)
+    return joinInventoryForecast(inventory, doseLogs, date)
+  }, [supplements, doseLogs, date])
 }
 
 /** Returns 7-day adherence stats and chart data derived from stored logs. */
