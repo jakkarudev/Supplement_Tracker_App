@@ -45,7 +45,7 @@ _Avoid_: expired, ended, inactive
 ### Doses and logs
 
 **Scheduled Dose**:
-One occurrence of a supplement at a scheduled time on a calendar date.
+One occurrence of a supplement at a scheduled time on a logical day.
 _Avoid_: intake, occurrence, dose (unqualified)
 
 **Dose Log**:
@@ -57,15 +57,15 @@ The state of a scheduled dose: taken, snoozed, or pending. Pending means no log 
 _Avoid_: intake status, log status
 
 **Day Regimen**:
-The scheduled doses for one calendar date, each joined with its dose status.
+The scheduled doses for one logical day, each joined with its dose status.
 _Avoid_: daily routine, day's intakes
 
 **Period**:
-A named part of the day used to group scheduled doses: Morning, Afternoon, Evening, or Night.
+A named part of the logical day used to group scheduled doses: Morning (05:00–11:59), Afternoon (12:00–16:59), Evening (17:00–20:59), or Night (21:00–04:59).
 _Avoid_: time slot
 
 **Wellness Log**:
-A daily self-rating of energy and focus on a valid calendar date, with finite scores from 1 to 10. One entry per date; the last valid entry wins.
+A daily self-rating of energy and focus on a logical day, with finite scores from 1 to 10. One entry per date; the last valid entry wins.
 _Avoid_: check-in, mood log, rating
 
 ### Inventory
@@ -97,25 +97,29 @@ _Avoid_: out of stock, negative stock
 ### Calendar and adherence
 
 **Calendar Date**:
-A single local day, independent of time-zone conversions.
+A single local day, independent of time-zone conversions. It is the label that identifies a Logical Day.
 _Avoid_: timestamp, date string
 
+**Logical Day**:
+The app's day, running from 05:00 to 04:59 on the following physical date. It is identified by a Calendar Date and is the date assigned to scheduled doses, dose logs, wellness logs, and adherence.
+_Avoid_: physical day, calendar day
+
 **Time of Day**:
-A clock time within a calendar date, independent of time zone.
+A clock reading, independent of time zone. Within a Logical Day, a reading before 05:00 occurs on the following physical date.
 _Avoid_: timestamp, datetime
 
 **Adherence**:
-The share of scheduled doses logged as taken on completed days. The current day counts only once it is fully complete.
+The share of scheduled doses logged as taken on completed logical days. The current logical day counts only once it is fully complete.
 _Avoid_: compliance, consistency
 
 **Adherence Streak**:
-The number of consecutive completed days with full adherence.
+The number of consecutive completed logical days with full adherence.
 _Avoid_: consistency streak, run
 
 ### Reminders
 
 **Reminder**:
-A prompt to log the scheduled doses due at one time of day on one calendar date.
+A prompt to log the scheduled doses due at one time of day on one logical day.
 _Avoid_: notification, alert, push
 
 **Reminder Plan**:
