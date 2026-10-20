@@ -5,6 +5,7 @@ import {
   formatDosage,
   inventoryUnitLabel,
   inventoryUnitPlural,
+  isValidDosageAmount,
   parseDosageValueForForm,
 } from "./dosage"
 
@@ -34,6 +35,34 @@ describe("parseDosageValueForForm", () => {
     expect(parseDosageValueForForm("Tablet", "1/4 tablet")).toBe("1/4")
     expect(parseDosageValueForForm("Liquid", "10 ml")).toBe("10")
     expect(parseDosageValueForForm("Powder", "5 g")).toBe("5")
+  })
+
+  it("keeps a stored solid dosage outside the fixed options", () => {
+    expect(parseDosageValueForForm("Capsule", "1.5 capsules")).toBe("1.5")
+    expect(parseDosageValueForForm("Tablet", "7/8 tablets")).toBe("7/8")
+  })
+
+  it("does not turn an unreadable stored dosage into an amount", () => {
+    expect(parseDosageValueForForm("Capsule", "some capsules")).toBe("")
+  })
+})
+
+describe("isValidDosageAmount", () => {
+  it("accepts positive whole, fractional, and decimal amounts", () => {
+    expect(isValidDosageAmount("1")).toBe(true)
+    expect(isValidDosageAmount("1/2")).toBe(true)
+    expect(isValidDosageAmount("1.5")).toBe(true)
+    expect(isValidDosageAmount("10.25")).toBe(true)
+  })
+
+  it("rejects blank, zero, negative, and malformed amounts", () => {
+    expect(isValidDosageAmount("")).toBe(false)
+    expect(isValidDosageAmount("0")).toBe(false)
+    expect(isValidDosageAmount("0/2")).toBe(false)
+    expect(isValidDosageAmount("1/0")).toBe(false)
+    expect(isValidDosageAmount("-1")).toBe(false)
+    expect(isValidDosageAmount("1/2/3")).toBe(false)
+    expect(isValidDosageAmount("some")).toBe(false)
   })
 })
 
