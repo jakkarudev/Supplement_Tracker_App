@@ -60,6 +60,10 @@ _Avoid_: intake, intake log, entry
 The state of a scheduled dose: taken, snoozed, or pending. Pending means no log exists for the dose.
 _Avoid_: intake status, log status
 
+**Actual Intake Time**:
+The clock time at which a Scheduled Dose was taken, recorded on its Dose Log as a Time of Day. Logs written before it was recorded have none.
+_Avoid_: taken timestamp, logged time
+
 **Day Regimen**:
 The scheduled doses for one logical day, each joined with its dose status.
 _Avoid_: daily routine, day's intakes
