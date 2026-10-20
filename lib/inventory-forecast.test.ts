@@ -38,10 +38,9 @@ describe("forecastInventory schedule coverage", () => {
     const forecast = forecastInventory(makeSupplement(), [], DATE)
 
     expect(forecast).toEqual({
-      status: "ok",
+      status: "projected",
       days: 60,
       runOutDate: addDays(DATE, 60),
-      courseEndsFirst: false,
       courseEndDate: null,
     })
   })
@@ -52,7 +51,7 @@ describe("forecastInventory schedule coverage", () => {
     const forecast = forecastInventory(supplement, [], DATE)
 
     expect(forecast).toMatchObject({
-      status: "ok",
+      status: "projected",
       days: 140,
       runOutDate: addDays(DATE, 140),
     })
@@ -68,7 +67,7 @@ describe("forecastInventory schedule coverage", () => {
     const forecast = forecastInventory(supplement, [], "2026-05-01")
 
     expect(forecast).toMatchObject({
-      status: "ok",
+      status: "projected",
       days: 84,
       runOutDate: addDays("2026-05-01", 84),
     })
@@ -83,7 +82,7 @@ describe("forecastInventory schedule coverage", () => {
     const forecast = forecastInventory(supplement, [], DATE)
 
     expect(forecast).toMatchObject({
-      status: "ok",
+      status: "projected",
       days: 70,
       runOutDate: addDays(DATE, 70),
     })
@@ -95,7 +94,7 @@ describe("forecastInventory schedule coverage", () => {
     const forecast = forecastInventory(supplement, [], DATE)
 
     expect(forecast).toMatchObject({
-      status: "ok",
+      status: "projected",
       days: 30,
       runOutDate: addDays(DATE, 30),
     })
@@ -111,7 +110,7 @@ describe("forecastInventory schedule coverage", () => {
     const forecast = forecastInventory(supplement, [], DATE)
 
     expect(forecast).toMatchObject({
-      status: "ok",
+      status: "projected",
       days,
       runOutDate: addDays(DATE, days),
     })
@@ -128,7 +127,7 @@ describe("forecastInventory schedule coverage", () => {
       const forecast = forecastInventory(supplement, [], DATE)
 
       expect(forecast).toMatchObject({
-        status: "ok",
+        status: "projected",
         days,
         runOutDate: addDays(DATE, days),
       })
@@ -152,7 +151,7 @@ describe("forecastInventory dose logs", () => {
     const forecast = forecastInventory(supplement, logs, DATE)
 
     expect(forecast).toMatchObject({
-      status: "ok",
+      status: "projected",
       days: 60,
       runOutDate: addDays(DATE, 60),
     })
@@ -173,7 +172,7 @@ describe("forecastInventory dose logs", () => {
     const forecast = forecastInventory(supplement, logs, DATE)
 
     expect(forecast).toMatchObject({
-      status: "ok",
+      status: "projected",
       days: 60,
       runOutDate: addDays(DATE, 60),
     })
@@ -208,20 +207,43 @@ describe("forecastInventory edge cases", () => {
     })
   })
 
-  it("bounds the projection at ten years", () => {
+  it("reports the horizon instead of fabricating a run-out date at ten years", () => {
     const supplement = makeSupplement({ currentCount: 100_000, totalCount: 100_000 })
 
     expect(forecastInventory(supplement, [], DATE)).toEqual({
-      status: "ok",
+      status: "beyond-horizon",
       days: 3650,
-      runOutDate: addDays(DATE, 3650),
-      courseEndsFirst: false,
       courseEndDate: null,
     })
   })
 
+  it("keeps the course end when the stock outlasts the horizon", () => {
+    const supplement = makeSupplement({
+      startedOn: DATE,
+      durationDays: 30,
+      currentCount: 100_000,
+      totalCount: 100_000,
+    })
+
+    expect(forecastInventory(supplement, [], DATE)).toEqual({
+      status: "beyond-horizon",
+      days: 3650,
+      courseEndDate: addDays(DATE, 29),
+    })
+  })
+
+  it("reports no upcoming doses before out of stock when the plan has no doses", () => {
+    const supplement = makeSupplement({ currentCount: 0, totalCount: 1, times: [] })
+
+    expect(forecastInventory(supplement, [], DATE)).toEqual({
+      status: "no-upcoming-doses",
+    })
+  })
+
   it("counts a dose-free day as covered before the next scheduled dose runs out", () => {
-    // Sunday with a Monday-only plan and only half a capsule on hand.
+    // ADR 0011 counts complete logical days, so a day with no scheduled dose is
+    // covered while stock remains: Sunday passes and Monday is the first day the
+    // half capsule cannot cover.
     const supplement = makeSupplement({
       days: [1],
       currentCount: 0.5,
@@ -229,10 +251,9 @@ describe("forecastInventory edge cases", () => {
     })
 
     expect(forecastInventory(supplement, [], "2026-05-03")).toEqual({
-      status: "ok",
+      status: "projected",
       days: 1,
       runOutDate: "2026-05-04",
-      courseEndsFirst: false,
       courseEndDate: null,
     })
   })
@@ -260,12 +281,31 @@ describe("joinInventoryForecast", () => {
     expect(
       joined.rows.map((row) => [row.supplement.id, row.forecast?.status ?? null]),
     ).toEqual([
-      ["current", "ok"],
+      ["current", "projected"],
       ["upcoming", null],
       ["finished", null],
     ])
     expect(joined.rows[0].forecast).toMatchObject({ days: 60 })
     expect(joined.summary).toEqual(inventory.summary)
+  })
+
+  it("consumes dose logs, so a taken dose is not counted twice", () => {
+    const supplement = makeSupplement({ currentCount: 59, totalCount: 60 })
+    const inventory = buildInventory([supplement], DATE)
+    const log = {
+      id: "taken-today",
+      supplementId: supplement.id,
+      date: DATE,
+      time: "08:00",
+      status: "taken" as const,
+    }
+
+    const withoutLog = joinInventoryForecast(inventory, [], DATE).rows[0].forecast
+    const withLog = joinInventoryForecast(inventory, [log], DATE).rows[0].forecast
+
+    expect(withoutLog).toMatchObject({ status: "projected", days: 59 })
+    expect(withLog).toMatchObject({ status: "projected", days: 60 })
+    expect(withLog).not.toEqual(withoutLog)
   })
 })
 
@@ -273,10 +313,9 @@ describe("describeInventoryForecast", () => {
   it("makes the day count the headline and the run-out date secondary", () => {
     expect(
       describeInventoryForecast({
-        status: "ok",
+        status: "projected",
         days: 60,
         runOutDate: "2026-07-03",
-        courseEndsFirst: false,
         courseEndDate: null,
       }),
     ).toEqual({
@@ -288,10 +327,9 @@ describe("describeInventoryForecast", () => {
   it("uses a singular day", () => {
     expect(
       describeInventoryForecast({
-        status: "ok",
+        status: "projected",
         days: 1,
         runOutDate: "2026-05-05",
-        courseEndsFirst: false,
         courseEndDate: null,
       }),
     ).toEqual({
@@ -303,10 +341,9 @@ describe("describeInventoryForecast", () => {
   it("shows the course end beside the run-out date when the course ends first", () => {
     expect(
       describeInventoryForecast({
-        status: "ok",
+        status: "projected",
         days: 60,
         runOutDate: "2026-07-03",
-        courseEndsFirst: true,
         courseEndDate: "2026-06-02",
       }),
     ).toEqual({
@@ -315,10 +352,50 @@ describe("describeInventoryForecast", () => {
     })
   })
 
+  it("does not show the course end when the stock runs out first", () => {
+    expect(
+      describeInventoryForecast({
+        status: "projected",
+        days: 10,
+        runOutDate: "2026-05-14",
+        courseEndDate: "2026-06-02",
+      }),
+    ).toEqual({
+      headline: "10 days of inventory",
+      secondary: "Runs out May 14",
+    })
+  })
+
+  it("describes the horizon without a run-out date", () => {
+    expect(
+      describeInventoryForecast({
+        status: "beyond-horizon",
+        days: 3650,
+        courseEndDate: null,
+      }),
+    ).toEqual({
+      headline: "10+ years of inventory",
+      secondary: null,
+    })
+  })
+
+  it("shows the course end alongside the horizon", () => {
+    expect(
+      describeInventoryForecast({
+        status: "beyond-horizon",
+        days: 3650,
+        courseEndDate: "2026-06-02",
+      }),
+    ).toEqual({
+      headline: "10+ years of inventory",
+      secondary: "Course ends June 2",
+    })
+  })
+
   it.each([
     [
       { status: "less-than-a-day" as const, days: 0 as const, runOutDate: DATE },
-      { headline: "Less than a day of inventory", secondary: "Runs out today" },
+      { headline: "Less than a day of inventory", secondary: "Runs out May 4" },
     ],
     [
       { status: "out-of-stock" as const },
@@ -340,11 +417,27 @@ describe("forecastInventory limited course", () => {
     const forecast = forecastInventory(supplement, [], DATE)
 
     expect(forecast).toEqual({
-      status: "ok",
+      status: "projected",
       days: 60,
       runOutDate: addDays(DATE, 60),
-      courseEndsFirst: true,
       courseEndDate: addDays(DATE, 29),
+    })
+  })
+
+  it("continues a weekday plan past a short course end", () => {
+    const supplement = makeSupplement({
+      startedOn: DATE,
+      durationDays: 7,
+      days: [1, 3, 5],
+    })
+
+    const forecast = forecastInventory(supplement, [], DATE)
+
+    expect(forecast).toEqual({
+      status: "projected",
+      days: 140,
+      runOutDate: addDays(DATE, 140),
+      courseEndDate: addDays(DATE, 6),
     })
   })
 
@@ -359,10 +452,9 @@ describe("forecastInventory limited course", () => {
     const forecast = forecastInventory(supplement, [], DATE)
 
     expect(forecast).toEqual({
-      status: "ok",
+      status: "projected",
       days: 10,
       runOutDate: addDays(DATE, 10),
-      courseEndsFirst: false,
       courseEndDate: addDays(DATE, 29),
     })
   })

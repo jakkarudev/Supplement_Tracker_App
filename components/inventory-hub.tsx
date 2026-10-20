@@ -13,6 +13,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { useAppDispatch, useInventory } from "@/lib/app-context"
+import type { CourseState } from "@/lib/day-regimen"
 import { inventoryUnitLabel } from "@/lib/dosage"
 import {
   describeInventoryForecast,
@@ -50,7 +51,7 @@ type Props = {
   onEdit?: (id: string) => void
 }
 
-const GROUPS: { state: InventoryRowWithForecast["courseState"]; label: string }[] = [
+const GROUPS: { state: CourseState; label: string }[] = [
   { state: "current", label: "Current" },
   { state: "upcoming", label: "Upcoming" },
   { state: "finished", label: "Finished" },
