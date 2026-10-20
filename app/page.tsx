@@ -85,7 +85,7 @@ export default function Page() {
             </span>
             <div className="min-w-0 leading-tight">
               <p className="text-sm font-semibold tracking-tight">Regimen</p>
-              <p className="truncate text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Supplement Tracker
               </p>
             </div>
