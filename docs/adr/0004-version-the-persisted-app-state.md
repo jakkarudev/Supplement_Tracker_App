@@ -4,11 +4,13 @@
 
 The app persists its entire `AppState` under the `regimen-v1` localStorage key. That key is an opaque legacy identifier, not a schema version: the 2026-05-29 design doc named the key `regimen-state`, the same-day implementation plan named it `regimen-state-v1`, and the shipped code settled on `regimen-v1`. The key stays as it is, so an old cached PWA client and a current client cannot diverge onto two keys.
 
-Stored payloads are flat and carry `schemaVersion` alongside the state collections. A payload without a numeric `schemaVersion` is version 0, the unversioned legacy shape; the canonical shape is version 1. Loading runs versioned migration steps (`0 → 1` today) and then an always-on normalizer that validates and salvages records. A stored version newer than the current one is never migrated, downgraded, or overwritten: the app reports that the data was written by a newer version and hydrates empty.
+Stored payloads are flat and carry `schemaVersion` alongside the state collections. A payload without a numeric `schemaVersion` is version 0, the unversioned legacy shape; the canonical shape was version 1 when this decision was recorded and is now version 2 (see below). Loading runs versioned migration steps (`0 → 1`, `1 → 2`) and then an always-on normalizer that validates and salvages records. A stored version newer than the current one is never migrated, downgraded, or overwritten: the app reports that the data was written by a newer version and hydrates empty.
 
 Before a load can be followed by a save, the raw stored value is backed up to `regimen-v1.corrupt.<ISO timestamp>` whenever it cannot be parsed, fails the top-level shape check, or produces dropped or repaired records during normalization (ADR 0005). Only the three newest backups are kept. If the backup write fails, the original value is left untouched and storage is treated as unavailable, so no overwrite can occur.
 
 The historical-draft deletion rule is dropped. It could erase user annotations because its equality check ignored `notes` and `purchaseUrl`, and a destructive migration must not be re-runnable. Cross-tab sync was deliberately out of scope for the versioning work; ADR 0006 adds it without changing the payload shape.
+
+The canonical shape is now version 2. The `1 → 2` step adds the optional `takenAt` Actual Intake Time field (ADR 0012) and transforms nothing, because a Dose Log without one is valid and must not be given an invented time.
 
 ## Consequences
 

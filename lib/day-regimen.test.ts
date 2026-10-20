@@ -8,12 +8,15 @@ import {
   doseKey,
   formatCalendarDate,
   formatTimeForDisplay,
+  intakeInstantFor,
   isCalendarDate,
+  isRecordableIntakeTime,
   normalizeTimeList,
   normalizeTimeOfDay,
   periodFromTime,
   physicalDateForTime,
   scheduledDoses,
+  timeOfDayFrom,
   today,
   upcomingScheduledDoses,
   weekDates,
@@ -184,6 +187,75 @@ describe("calendar vocabulary", () => {
         day: "numeric",
       }),
     ).toBe("Wednesday, May 6")
+  })
+})
+
+describe("actual intake time", () => {
+  it("resolves a logical date and time to its local instant", () => {
+    expect(intakeInstantFor("2026-05-04", "08:00")).toEqual(
+      new Date(2026, 4, 4, 8, 0, 0, 0),
+    )
+    expect(intakeInstantFor("2026-05-04", "23:59")).toEqual(
+      new Date(2026, 4, 4, 23, 59, 0, 0),
+    )
+    expect(intakeInstantFor("2026-05-04", "02:00")).toEqual(
+      new Date(2026, 4, 5, 2, 0, 0, 0),
+    )
+    expect(intakeInstantFor("2026-05-04", "04:59")).toEqual(
+      new Date(2026, 4, 5, 4, 59, 0, 0),
+    )
+    expect(intakeInstantFor("2026-05-04", "05:00")).toEqual(
+      new Date(2026, 4, 4, 5, 0, 0, 0),
+    )
+    expect(intakeInstantFor("2026-05-04", "noon")).toBeNull()
+    expect(intakeInstantFor("not-a-date", "08:00")).toBeNull()
+  })
+
+  it("accepts a past time today and the current minute", () => {
+    const now = new Date(2026, 4, 4, 10, 0)
+
+    expect(isRecordableIntakeTime("2026-05-04", "09:59", now)).toBe(true)
+    expect(isRecordableIntakeTime("2026-05-04", "10:00", now)).toBe(true)
+  })
+
+  it("rejects a time that would be in the future", () => {
+    const now = new Date(2026, 4, 4, 10, 0)
+
+    expect(isRecordableIntakeTime("2026-05-04", "10:01", now)).toBe(false)
+  })
+
+  it("accepts a pre-05:00 time on the logical day it belongs to", () => {
+    // 02:30 is before the 05:00 boundary, so the current logical day is the
+    // previous calendar date and 02:00 resolves to today's physical morning.
+    const now = new Date(2026, 4, 4, 2, 30)
+
+    expect(isRecordableIntakeTime("2026-05-03", "02:00", now)).toBe(true)
+  })
+
+  it("rejects a pre-05:00 time that lands on the next physical date", () => {
+    // At 06:00 on logical day 2026-05-04, 04:00 resolves to 2026-05-05.
+    const now = new Date(2026, 4, 4, 6, 0)
+
+    expect(isRecordableIntakeTime("2026-05-04", "04:00", now)).toBe(false)
+  })
+
+  it("accepts a time recorded earlier in the same minute", () => {
+    const now = new Date(2026, 4, 4, 10, 12, 30)
+
+    expect(isRecordableIntakeTime("2026-05-04", "10:12", now)).toBe(true)
+  })
+
+  it("rejects invalid times", () => {
+    const now = new Date(2026, 4, 4, 10, 0)
+
+    expect(isRecordableIntakeTime("2026-05-04", "noon", now)).toBe(false)
+    expect(isRecordableIntakeTime("2026-05-04", "24:00", now)).toBe(false)
+  })
+
+  it("formats a local Date as a canonical 24-hour time of day", () => {
+    expect(timeOfDayFrom(new Date(2026, 4, 4, 9, 5))).toBe("09:05")
+    expect(timeOfDayFrom(new Date(2026, 4, 4, 0, 0))).toBe("00:00")
+    expect(timeOfDayFrom(new Date(2026, 4, 4, 23, 59, 59))).toBe("23:59")
   })
 })
 

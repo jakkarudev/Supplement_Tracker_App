@@ -45,8 +45,8 @@ function takenLog(overrides: Partial<DoseLog> = {}): DoseLog {
   }
 }
 
-function logInput(status: DoseLog["status"]) {
-  return { supplementId: "magnesium", date: DATE, time: TIME, status }
+function logInput(status: DoseLog["status"], takenAt?: string) {
+  return { supplementId: "magnesium", date: DATE, time: TIME, status, takenAt }
 }
 
 describe("supplement writes", () => {
@@ -95,8 +95,20 @@ describe("logDose", () => {
     ])
   })
 
+  it("records the actual intake time when a dose is taken", () => {
+    const next = logDose(makeState(), logInput("taken", "10:12"))
+
+    expect(next.doseLogs[0]).toMatchObject({ status: "taken", takenAt: "10:12" })
+  })
+
+  it("stores the actual intake time in canonical 24-hour form", () => {
+    const next = logDose(makeState(), logInput("taken", "10:12 AM"))
+
+    expect(next.doseLogs[0].takenAt).toBe("10:12")
+  })
+
   it("does not consume inventory twice when taken repeats", () => {
-    const once = logDose(makeState(), logInput("taken"))
+    const once = logDose(makeState(), logInput("taken", "10:12"))
     const twice = logDose(once, logInput("taken"))
 
     expect(twice.supplements[0].currentCount).toBe(8)
@@ -104,22 +116,53 @@ describe("logDose", () => {
     expect(twice.doseLogs[0].id).toBe(once.doseLogs[0].id)
   })
 
+  it("preserves the actual time when a taken dose is re-logged without one", () => {
+    const once = logDose(makeState(), logInput("taken", "10:12"))
+    const twice = logDose(once, logInput("taken"))
+
+    expect(twice.doseLogs[0].takenAt).toBe("10:12")
+  })
+
+  it("corrects the actual time without moving inventory", () => {
+    const once = logDose(makeState(), logInput("taken", "10:12"))
+    const corrected = logDose(once, logInput("taken", "10:20"))
+
+    expect(corrected.supplements[0].currentCount).toBe(8)
+    expect(corrected.doseLogs[0]).toMatchObject({
+      id: once.doseLogs[0].id,
+      takenAt: "10:20",
+      inventoryAmount: 2,
+    })
+  })
+
   it("restores inventory when a taken dose is snoozed", () => {
-    const taken = logDose(makeState(), logInput("taken"))
+    const taken = logDose(makeState(), logInput("taken", "10:12"))
     const snoozed = logDose(taken, logInput("snoozed"))
 
     expect(snoozed.supplements[0].currentCount).toBe(10)
     expect(snoozed.doseLogs).toHaveLength(1)
     expect(snoozed.doseLogs[0]).toMatchObject({ status: "snoozed" })
     expect(snoozed.doseLogs[0]).not.toHaveProperty("inventoryAmount")
+    expect(snoozed.doseLogs[0]).not.toHaveProperty("takenAt")
   })
 
   it("restores inventory and removes the log when a taken dose is undone", () => {
-    const taken = logDose(makeState(), logInput("taken"))
+    const taken = logDose(makeState(), logInput("taken", "10:12"))
     const undone = logDose(taken, logInput("pending"))
 
     expect(undone.supplements[0].currentCount).toBe(10)
     expect(undone.doseLogs).toEqual([])
+  })
+
+  it("keeps a taken log without an actual time when none is recorded", () => {
+    const legacy = makeState({
+      supplements: [makeSupplement({ currentCount: 8 })],
+      doseLogs: [takenLog()],
+    })
+
+    const next = logDose(legacy, logInput("taken"))
+
+    expect(next.doseLogs[0]).not.toHaveProperty("takenAt")
   })
 
   it("consumes inventory once when a snoozed dose is confirmed", () => {

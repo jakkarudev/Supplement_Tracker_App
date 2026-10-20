@@ -1,6 +1,6 @@
 import type { DoseLog, DoseStatus, Supplement } from "./supplements-data"
 import { dosageInventoryAmount } from "./dosage"
-import { doseKey, type CalendarDate } from "./day-regimen"
+import { doseKey, normalizeTimeOfDay, type CalendarDate } from "./day-regimen"
 import { nanoid } from "./nanoid"
 
 /** The tracked state this module owns: supplements and their dose logs. */
@@ -15,6 +15,7 @@ export type LogDoseInput = {
   date: CalendarDate
   time: string
   status: DoseStatus
+  takenAt?: string
 }
 
 /** Appends a supplement. Scheduled doses are derived, so nothing is seeded. */
@@ -47,6 +48,16 @@ export function deleteSupplement(
     supplements: state.supplements.filter((s) => s.id !== supplementId),
     doseLogs: state.doseLogs.filter((log) => log.supplementId !== supplementId),
   }
+}
+
+/**
+ * Returns a copy of `log` carrying the normalized actual time when the input
+ * supplies a valid one. An omitted or invalid value leaves the recorded time
+ * untouched rather than erasing it.
+ */
+function withTakenAt(log: DoseLog, value: string | undefined): DoseLog {
+  const takenAt = normalizeTimeOfDay(value)
+  return takenAt === null ? log : { ...log, takenAt }
 }
 
 /**
@@ -90,13 +101,15 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
   }
 
   if (existing) {
-    const nextLog: DoseLog = { ...existing, status: input.status }
+    let nextLog: DoseLog = { ...existing, status: input.status }
     if (isTaken) {
       nextLog.inventoryAmount =
         existing.inventoryAmount ??
         (supplement ? dosageInventoryAmount(supplement.dosage) : undefined)
+      nextLog = withTakenAt(nextLog, input.takenAt)
     } else {
       delete nextLog.inventoryAmount
+      delete nextLog.takenAt
     }
 
     return {
@@ -107,15 +120,18 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
     }
   }
 
-  const newLog: DoseLog = {
+  let newLog: DoseLog = {
     id: nanoid(),
     supplementId: input.supplementId,
     date: input.date,
     time: input.time,
     status: input.status,
   }
-  if (isTaken && supplement) {
-    newLog.inventoryAmount = dosageInventoryAmount(supplement.dosage)
+  if (isTaken) {
+    if (supplement) {
+      newLog.inventoryAmount = dosageInventoryAmount(supplement.dosage)
+    }
+    newLog = withTakenAt(newLog, input.takenAt)
   }
 
   return { supplements, doseLogs: [...state.doseLogs, newLog] }
