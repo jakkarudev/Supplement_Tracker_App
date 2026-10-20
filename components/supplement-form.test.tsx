@@ -55,16 +55,22 @@ function fieldValue(label: string): string {
   return (screen.getByLabelText(label) as HTMLInputElement).value
 }
 
+beforeEach(() => {
+  mocks.dispatch.mockClear()
+  mocks.supplements = []
+})
+
+afterEach(cleanup)
+
 describe("SupplementForm editing an existing supplement", () => {
-  beforeEach(() => {
-    mocks.dispatch.mockClear()
-    mocks.supplements = []
-  })
-
-  afterEach(cleanup)
-
   it("prefills every field from the stored supplement", () => {
-    const stored = supplement({ form: "Tablet", dosage: "1/2 tablets", durationDays: 30 })
+    const stored = supplement({
+      form: "Tablet",
+      dosage: "1/2 tablets",
+      durationDays: 30,
+      cycleActiveDays: 6,
+      cycleBreakDays: 2,
+    })
     mocks.supplements = [stored]
 
     render(<SupplementForm editingId={stored.id} />)
@@ -73,8 +79,13 @@ describe("SupplementForm editing an existing supplement", () => {
     expect(fieldValue("Brand")).toBe("Thorne")
     expect(fieldValue("Potency")).toBe("5000 IU")
     expect(fieldValue("Started on")).toBe("2026-01-02")
-    const takeFor = screen.getByText("Take for").closest('[data-slot="form-item"]')
-    expect((takeFor?.querySelector("input") as HTMLInputElement).value).toBe("30")
+    const takeForInputs = screen.getAllByText("Take for").map(
+      (label) => label.closest('[data-slot="form-item"]')?.querySelector("input") as HTMLInputElement,
+    )
+    expect(takeForInputs[0]?.value).toBe("30")
+    expect(takeForInputs[1]?.value).toBe("6")
+    const breakFor = screen.getByText("Break for").closest('[data-slot="form-item"]')
+    expect((breakFor?.querySelector("input") as HTMLInputElement).value).toBe("2")
     expect(fieldValue("Full amount (tablets)")).toBe("120")
     expect(fieldValue("Current amount (tablets)")).toBe("100")
     expect((screen.getByPlaceholderText("https://...") as HTMLInputElement).value).toBe(
@@ -92,7 +103,7 @@ describe("SupplementForm editing an existing supplement", () => {
     )
     expect(screen.getByRole("switch", { name: "Restock alert" }).getAttribute("aria-checked")).toBe("true")
     expect(screen.getByRole("switch", { name: "Take scheduled breaks" }).getAttribute("aria-checked")).toBe(
-      "false",
+      "true",
     )
 
     for (const day of ["Mon", "Wed", "Fri"]) {
@@ -117,27 +128,37 @@ describe("SupplementForm editing an existing supplement", () => {
     })
   })
 
-  it("prefills a liquid dosage with its decimal amount", () => {
-    const stored = supplement({ form: "Liquid", dosage: "10.5 ml" })
+  it.each([
+    ["1/4 capsules", "1/4"],
+    ["1/3 capsules", "1/3"],
+    ["1/2 capsules", "1/2"],
+    ["2 capsules", "2"],
+  ])("prefills the solid dosage %s", (dosage, expected) => {
+    const stored = supplement({ dosage })
     mocks.supplements = [stored]
 
     render(<SupplementForm editingId={stored.id} />)
 
-    expect(screen.getByRole("combobox", { name: "Form" }).textContent?.trim()).toBe("Liquid")
-    expect((screen.getByPlaceholderText("e.g. 10") as HTMLInputElement).value).toBe("10.5")
-    expect(screen.getByText("ml")).toBeTruthy()
+    expect(screen.getByRole("combobox", { name: "Form" }).textContent?.trim()).toBe("Capsule")
+    expect(screen.getByRole("combobox", { name: "Dosage" }).textContent?.trim()).toBe(expected)
   })
 
-  it("prefills a powder dosage with its decimal amount", () => {
-    const stored = supplement({ form: "Powder", dosage: "3.5 g" })
-    mocks.supplements = [stored]
+  it.each([
+    ["Liquid", "10.5 ml", "e.g. 10", "10.5", "ml"],
+    ["Powder", "3.5 g", "e.g. 5", "3.5", "g"],
+  ] as const)(
+    "prefills a %s dosage with its decimal amount",
+    (form, dosage, placeholder, amount, unit) => {
+      const stored = supplement({ form, dosage })
+      mocks.supplements = [stored]
 
-    render(<SupplementForm editingId={stored.id} />)
+      render(<SupplementForm editingId={stored.id} />)
 
-    expect(screen.getByRole("combobox", { name: "Form" }).textContent?.trim()).toBe("Powder")
-    expect((screen.getByPlaceholderText("e.g. 5") as HTMLInputElement).value).toBe("3.5")
-    expect(screen.getByText("g")).toBeTruthy()
-  })
+      expect(screen.getByRole("combobox", { name: "Form" }).textContent?.trim()).toBe(form)
+      expect((screen.getByPlaceholderText(placeholder) as HTMLInputElement).value).toBe(amount)
+      expect(screen.getByText(unit)).toBeTruthy()
+    },
+  )
 
   it("keeps a legacy solid dosage as the current selection and saves it unchanged", async () => {
     const stored = supplement({ id: "supp-legacy", dosage: "1.5 capsules" })
@@ -190,6 +211,9 @@ describe("SupplementForm editing an existing supplement", () => {
 
     expect(formSelect.textContent?.trim()).toBe("Liquid")
     expect((screen.getByPlaceholderText("e.g. 10") as HTMLInputElement).value).toBe("")
+    expect(screen.getByLabelText("Full amount (ml)")).toBeTruthy()
+    expect(screen.getByLabelText("Current amount (ml)")).toBeTruthy()
+    expect(screen.getByText("ml")).toBeTruthy()
   })
 
   it("prefills when the supplement arrives after editingId is set", () => {
@@ -219,6 +243,51 @@ describe("SupplementForm editing an existing supplement", () => {
     expect(screen.getByRole("combobox", { name: "Dosage" }).textContent?.trim()).toBe("2")
   })
 
+  it("resets to defaults when editingId changes to an id with no stored supplement", () => {
+    mocks.supplements = [supplement({ id: "supp-1" })]
+    const view = render(<SupplementForm editingId="supp-1" />)
+    expect(fieldValue("Name")).toBe("Vitamin D3")
+
+    view.rerender(<SupplementForm editingId="supp-missing" />)
+
+    expect(fieldValue("Name")).toBe("")
+    expect(screen.getByRole("combobox", { name: "Form" }).textContent?.trim()).toBe("Capsule")
+    expect(screen.getByRole("combobox", { name: "Dosage" }).textContent?.trim()).toBe("Choose amount")
+  })
+
+  it("prefills when the record for a changed editingId arrives later", () => {
+    mocks.supplements = [supplement({ id: "supp-1" })]
+    const view = render(<SupplementForm editingId="supp-1" />)
+
+    view.rerender(<SupplementForm editingId="supp-2" />)
+    expect(fieldValue("Name")).toBe("")
+
+    mocks.supplements = [
+      supplement({ id: "supp-1" }),
+      supplement({ id: "supp-2", name: "Magnesium", dosage: "3 capsules" }),
+    ]
+    view.rerender(<SupplementForm editingId="supp-2" />)
+
+    expect(fieldValue("Name")).toBe("Magnesium")
+    expect(screen.getByRole("combobox", { name: "Form" }).textContent?.trim()).toBe("Capsule")
+    expect(screen.getByRole("combobox", { name: "Dosage" }).textContent?.trim()).toBe("3")
+  })
+
+  it.each([".5", "1e3"])("submits a liquid dosage the number input accepts: %s", async (amount) => {
+    const stored = supplement({ id: "supp-liquid", form: "Liquid", dosage: "10 ml" })
+    mocks.supplements = [stored]
+
+    render(<SupplementForm editingId={stored.id} />)
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. 10"), { target: { value: amount } })
+    fireEvent.click(screen.getByRole("button", { name: "Update supplement" }))
+
+    await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1))
+    expect(mocks.dispatch.mock.calls[0][0].payload.dosage).toBe(`${amount} ml`)
+  })
+})
+
+describe("SupplementForm creating a supplement", () => {
   it("rejects a blank Dosage instead of saving", async () => {
     render(<SupplementForm />)
 

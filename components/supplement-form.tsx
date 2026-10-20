@@ -32,13 +32,13 @@ import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
 import { requestReminderPermission } from "@/lib/reminders"
 import { today } from "@/lib/day-regimen"
 import {
-  SOLID_DOSAGE_OPTIONS,
   dosageUnitForForm,
   formatDosage,
   inventoryUnitPlural,
   isSolidForm,
   isValidDosageAmount,
   parseDosageValueForForm,
+  solidDosageOptionsFor,
 } from "@/lib/dosage"
 import { SUPPLEMENT_FORMS } from "@/lib/supplements-data"
 
@@ -92,7 +92,7 @@ const schema = z.object({
 }).refine((v) => !isSolidForm(v.form) || isValidDosageAmount(v.dosage), {
   message: "Choose a dosage",
   path: ["dosage"],
-}).refine((v) => isSolidForm(v.form) || isValidDosageAmount(v.dosage), {
+}).refine((v) => isSolidForm(v.form) || Number(v.dosage) > 0, {
   message: "Enter an amount greater than 0",
   path: ["dosage"],
 }).refine((v) => v.durationMode === "ongoing" || Number(v.durationDays) > 0, {
@@ -196,7 +196,13 @@ export function SupplementForm({ editingId, onDone }: Props) {
       setTimeInputs(["08:00"])
       return
     }
-    if (!editing || prefilledIdRef.current === editingId) return
+    if (prefilledIdRef.current === editingId) return
+    if (!editing) {
+      prefilledIdRef.current = null
+      form.reset(defaultValues)
+      setTimeInputs(["08:00"])
+      return
+    }
 
     prefilledIdRef.current = editingId
     form.reset({
@@ -236,15 +242,10 @@ export function SupplementForm({ editingId, onDone }: Props) {
     return "Choose amount"
   }, [watchForm])
 
-  // Carry a stored solid dosage that predates the fixed options (e.g.
-  // "1.5 capsules") as the current selection. It drops out once the user
-  // picks one of the fixed amounts.
-  const solidDosageOptions = useMemo(() => {
-    if (!watchDosage || SOLID_DOSAGE_OPTIONS.includes(watchDosage)) {
-      return SOLID_DOSAGE_OPTIONS
-    }
-    return [...SOLID_DOSAGE_OPTIONS, watchDosage]
-  }, [watchDosage])
+  // A stored solid dosage that predates the fixed options (e.g. "1.5 capsules")
+  // is carried in as the current selection. It drops out once the user picks
+  // one of the fixed amounts.
+  const solidDosageOptions = useMemo(() => solidDosageOptionsFor(watchDosage), [watchDosage])
 
   function toggleDay(value: number) {
     const current = form.getValues("days")
