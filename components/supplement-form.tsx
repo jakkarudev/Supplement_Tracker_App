@@ -32,12 +32,13 @@ import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
 import { requestReminderPermission } from "@/lib/reminders"
 import { today } from "@/lib/day-regimen"
 import {
-  SOLID_DOSAGE_OPTIONS,
   dosageUnitForForm,
   formatDosage,
   inventoryUnitPlural,
   isSolidForm,
+  isValidDosageAmount,
   parseDosageValueForForm,
+  solidDosageOptionsFor,
 } from "@/lib/dosage"
 import { SUPPLEMENT_FORMS } from "@/lib/supplements-data"
 
@@ -88,7 +89,7 @@ const schema = z.object({
 }).refine((v) => !v.restockReminder || v.restockThreshold <= v.totalCount, {
   message: "Threshold cannot exceed the full amount",
   path: ["restockThreshold"],
-}).refine((v) => !isSolidForm(v.form) || SOLID_DOSAGE_OPTIONS.includes(v.dosage), {
+}).refine((v) => !isSolidForm(v.form) || isValidDosageAmount(v.dosage), {
   message: "Choose a dosage",
   path: ["dosage"],
 }).refine((v) => isSolidForm(v.form) || Number(v.dosage) > 0, {
@@ -106,6 +107,18 @@ const schema = z.object({
 })
 
 type FormValues = z.infer<typeof schema>
+
+/**
+ * The select can report an empty change when a controlled value is set before
+ * its options have registered. No select in this form offers an empty choice,
+ * so an empty value is never a user selection and must not reach form state.
+ */
+function nonEmptyChange(onChange: (value: string) => void) {
+  return (value: string) => {
+    if (value === "") return
+    onChange(value)
+  }
+}
 
 function SectionCard({
   icon: Icon,
@@ -171,44 +184,57 @@ export function SupplementForm({ editingId, onDone }: Props) {
   })
 
   const [timeInputs, setTimeInputs] = useState<string[]>(["08:00"])
+  const prefilledIdRef = useRef<string | null>(null)
 
-  // Reset form when editingId changes
+  // Prefill from the stored supplement once it is available. An adoption can
+  // replace the supplement object for the same id while the form is open, but
+  // it must not overwrite values the user is still editing.
   useEffect(() => {
-    if (editing) {
-      form.reset({
-        name: editing.name,
-        brand: editing.brand ?? "",
-        potency: editing.potency ?? "",
-        form: editing.form,
-        dosage: parseDosageValueForForm(editing.form, editing.dosage ?? ""),
-        notes: editing.notes ?? "",
-        startedOn: editing.startedOn,
-        durationMode: editing.durationDays ? "limited" : "ongoing",
-        durationDays: editing.durationDays,
-        cycleEnabled: Boolean(editing.cycleActiveDays && editing.cycleBreakDays),
-        cycleActiveDays: editing.cycleActiveDays,
-        cycleBreakDays: editing.cycleBreakDays,
-        days: editing.days,
-        totalCount: editing.totalCount,
-        currentCount: editing.currentCount,
-        purchaseUrl: editing.purchaseUrl ?? "",
-        restockReminder: editing.restockReminder,
-        restockThreshold: editing.restockThreshold,
-      })
-      setTimeInputs(editing.times)
-    } else {
+    if (!editingId) {
+      prefilledIdRef.current = null
       form.reset(defaultValues)
       setTimeInputs(["08:00"])
+      return
     }
+    if (prefilledIdRef.current === editingId) return
+    if (!editing) {
+      prefilledIdRef.current = null
+      form.reset(defaultValues)
+      setTimeInputs(["08:00"])
+      return
+    }
+
+    prefilledIdRef.current = editingId
+    form.reset({
+      name: editing.name,
+      brand: editing.brand ?? "",
+      potency: editing.potency ?? "",
+      form: editing.form,
+      dosage: parseDosageValueForForm(editing.form, editing.dosage ?? ""),
+      notes: editing.notes ?? "",
+      startedOn: editing.startedOn,
+      durationMode: editing.durationDays ? "limited" : "ongoing",
+      durationDays: editing.durationDays,
+      cycleEnabled: Boolean(editing.cycleActiveDays && editing.cycleBreakDays),
+      cycleActiveDays: editing.cycleActiveDays,
+      cycleBreakDays: editing.cycleBreakDays,
+      days: editing.days,
+      totalCount: editing.totalCount,
+      currentCount: editing.currentCount,
+      purchaseUrl: editing.purchaseUrl ?? "",
+      restockReminder: editing.restockReminder,
+      restockThreshold: editing.restockThreshold,
+    })
+    setTimeInputs(editing.times)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingId])
+  }, [editingId, editing])
 
   const watchDays = form.watch("days")
   const watchRestock = form.watch("restockReminder")
   const watchForm = form.watch("form")
+  const watchDosage = form.watch("dosage")
   const watchDurationMode = form.watch("durationMode")
   const watchCycleEnabled = form.watch("cycleEnabled")
-  const previousFormRef = useRef<FormValues["form"] | null>(null)
 
   const dosagePlaceholder = useMemo(() => {
     if (watchForm === "Liquid") return "e.g. 10"
@@ -216,12 +242,10 @@ export function SupplementForm({ editingId, onDone }: Props) {
     return "Choose amount"
   }, [watchForm])
 
-  useEffect(() => {
-    if (previousFormRef.current && previousFormRef.current !== watchForm) {
-      form.setValue("dosage", "", { shouldValidate: true })
-    }
-    previousFormRef.current = watchForm
-  }, [watchForm, form])
+  // A stored solid dosage that predates the fixed options (e.g. "1.5 capsules")
+  // is carried in as the current selection. It drops out once the user picks
+  // one of the fixed amounts.
+  const solidDosageOptions = useMemo(() => solidDosageOptionsFor(watchDosage), [watchDosage])
 
   function toggleDay(value: number) {
     const current = form.getValues("days")
@@ -372,7 +396,16 @@ export function SupplementForm({ editingId, onDone }: Props) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Form</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select
+                    onValueChange={nonEmptyChange((value) => {
+                      const previousForm = form.getValues("form")
+                      field.onChange(value)
+                      if (value !== previousForm) {
+                        form.setValue("dosage", "", { shouldValidate: true })
+                      }
+                    })}
+                    value={field.value}
+                  >
                     <FormControl>
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select form" />
@@ -396,14 +429,14 @@ export function SupplementForm({ editingId, onDone }: Props) {
                   <FormLabel>Dosage</FormLabel>
                   <FormControl>
                     {isSolidForm(watchForm) ? (
-                      <Select onValueChange={field.onChange} value={field.value}>
+                      <Select onValueChange={nonEmptyChange(field.onChange)} value={field.value}>
                         <FormControl>
                           <SelectTrigger className="w-full">
                             <SelectValue placeholder={dosagePlaceholder} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {SOLID_DOSAGE_OPTIONS.map((option) => (
+                          {solidDosageOptions.map((option) => (
                             <SelectItem key={option} value={option}>
                               {option}
                             </SelectItem>
@@ -553,7 +586,7 @@ export function SupplementForm({ editingId, onDone }: Props) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Course length</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={nonEmptyChange(field.onChange)} value={field.value}>
                     <FormControl>
                       <SelectTrigger className="w-full">
                         <SelectValue />
