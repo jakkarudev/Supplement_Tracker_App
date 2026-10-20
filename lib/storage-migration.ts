@@ -11,7 +11,7 @@ import { isCalendarDate, normalizeTimeList, normalizeTimeOfDay } from "./day-reg
 
 type StoredPayload = Record<string, unknown>
 
-export const CURRENT_SCHEMA_VERSION = 1
+export const CURRENT_SCHEMA_VERSION = 2
 
 const LEGACY_STARTED_ON = "1970-01-01"
 const DOSE_STATUSES: readonly DoseStatus[] = ["taken", "pending", "snoozed"]
@@ -228,7 +228,7 @@ function normalizeSupplement(value: unknown): NormalizedRecord<Supplement> | nul
 function normalizeDoseLog(value: unknown): NormalizedRecord<DoseLog> | null {
   if (!isRecord(value)) return null
 
-  const { id, supplementId, date, time, status, inventoryAmount } = value
+  const { id, supplementId, date, time, status, inventoryAmount, takenAt } = value
   if (typeof id !== "string" || id.length === 0) return null
   if (typeof supplementId !== "string" || supplementId.length === 0) return null
   if (!isCalendarDate(date)) return null
@@ -246,12 +246,16 @@ function normalizeDoseLog(value: unknown): NormalizedRecord<DoseLog> | null {
   ) {
     record.inventoryAmount = inventoryAmount
   }
+  const normalizedTakenAt = status === "taken" ? normalizeTimeOfDay(takenAt) : null
+  if (normalizedTakenAt !== null) record.takenAt = normalizedTakenAt
 
-  // A stripped `inventoryAmount` is deliberately absent from the normalized
-  // record, so the field comparison cannot see it; compare it explicitly.
+  // A stripped `inventoryAmount` or `takenAt` is deliberately absent from the
+  // normalized record, so the field comparison cannot see it; compare both
+  // explicitly. An absent optional value is not a repair.
   const repaired =
     recordRewritten(record, value) ||
-    valueRewritten(record.inventoryAmount, inventoryAmount)
+    valueRewritten(record.inventoryAmount, inventoryAmount) ||
+    valueRewritten(record.takenAt, takenAt)
 
   return { record, repaired }
 }
@@ -408,7 +412,16 @@ function migrateV0ToV1(payload: StoredPayload): StoredPayload {
   }
 }
 
-const MIGRATION_STEPS: readonly MigrationStep[] = [migrateV0ToV1]
+/**
+ * Version 1 → 2 adds the optional `takenAt` Actual Intake Time field. Logs
+ * written before it existed are valid without one, so the step transforms
+ * nothing beyond the version marker.
+ */
+function migrateV1ToV2(payload: StoredPayload): StoredPayload {
+  return { ...payload, schemaVersion: 2 }
+}
+
+const MIGRATION_STEPS: readonly MigrationStep[] = [migrateV0ToV1, migrateV1ToV2]
 
 function runMigrationSteps(payload: StoredPayload, fromVersion: number): StoredPayload {
   let migrated = payload

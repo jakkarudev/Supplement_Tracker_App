@@ -146,6 +146,46 @@ export function physicalDateForTime(
     : logicalDate
 }
 
+/**
+ * Resolves a logical day's clock time to the local instant it denotes. A time
+ * before 05:00 lands on the following physical date.
+ */
+export function intakeInstantFor(
+  logicalDate: CalendarDate,
+  time: string,
+): Date | null {
+  if (!isCalendarDate(logicalDate)) return null
+
+  const normalized = normalizeTimeOfDay(time)
+  if (normalized === null) return null
+
+  const physicalDate = physicalDateForTime(logicalDate, normalized)
+  const [year, month, day] = physicalDate.split("-").map(Number)
+  const { hour, minute } = clockFromTime(normalized)
+  return new Date(year, month - 1, day, hour, minute, 0, 0)
+}
+
+/**
+ * Whether a time is a real clock reading on the logical day and is not after
+ * `now`. The resolved instant carries the 05:00 attribution, so a pre-dawn time
+ * that would land on the next physical date is rejected as future.
+ */
+export function isValidIntakeTime(
+  logicalDate: CalendarDate,
+  time: string,
+  now: Date = new Date(),
+): boolean {
+  const instant = intakeInstantFor(logicalDate, time)
+  return instant !== null && instant.getTime() <= now.getTime()
+}
+
+/** Formats a local Date as a canonical 24-hour "HH:mm" time of day. */
+export function timeOfDayFrom(at: Date): string {
+  const hour = String(at.getHours()).padStart(2, "0")
+  const minute = String(at.getMinutes()).padStart(2, "0")
+  return `${hour}:${minute}`
+}
+
 /** Parses a calendar date to local day-of-week (0=Sun … 6=Sat). */
 export function dayOfWeek(date: CalendarDate): number {
   return localDateFromCalendarDate(date).getDay()

@@ -10,6 +10,8 @@ Before a load can be followed by a save, the raw stored value is backed up to `r
 
 The historical-draft deletion rule is dropped. It could erase user annotations because its equality check ignored `notes` and `purchaseUrl`, and a destructive migration must not be re-runnable. Cross-tab sync was deliberately out of scope for the versioning work; ADR 0006 adds it without changing the payload shape.
 
+The canonical shape is now version 2. The `1 → 2` step adds the optional `takenAt` Actual Intake Time field (ADR 0012) and transforms nothing, because a Dose Log without one is valid and must not be given an invented time.
+
 ## Consequences
 
 - Old clients ignore `schemaVersion` and strip it when they save, so every migration step must be pure, idempotent, and non-destructive; `0 → 1` can run again.
