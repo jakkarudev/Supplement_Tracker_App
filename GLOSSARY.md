@@ -124,6 +124,10 @@ _Avoid_: physical day, calendar day
 A clock reading, independent of time zone. Within a Logical Day, a reading before 05:00 occurs on the following physical date.
 _Avoid_: timestamp, datetime
 
+**Time Format**:
+The user's preference for showing a Time of Day: 12-hour with AM/PM, or 24-hour. Stored Times of Day stay canonical 24-hour; only the display changes.
+_Avoid_: time style, clock format, 12/24 setting
+
 **Adherence**:
 The share of scheduled doses logged as taken on completed logical days. The current logical day counts only once it is fully complete.
 _Avoid_: compliance, consistency

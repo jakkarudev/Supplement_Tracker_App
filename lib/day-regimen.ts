@@ -325,13 +325,28 @@ export function normalizeTimeList(value: unknown): string[] {
   return [...new Set(times)]
 }
 
-/** Formats a canonical "HH:mm" time as a zero-padded 12-hour display time. */
-export function formatTimeForDisplay(time: string): string {
+/** The clock a displayed time is shown on: 12-hour with AM/PM, or 24-hour. */
+export type TimeFormat = "12h" | "24h"
+
+/**
+ * Formats a canonical "HH:mm" time for display. The 12-hour form is the
+ * default, so existing call sites keep their meaning; the 24-hour form is
+ * the canonical time itself.
+ */
+export function formatTimeForDisplay(
+  time: string,
+  format: TimeFormat = "12h",
+): string {
   const match = CANONICAL_TIME.exec(time)
   if (!match) return time
 
   const hour = Number(match[1])
   const minute = match[2]
+
+  if (format === "24h") {
+    return `${String(hour).padStart(2, "0")}:${minute}`
+  }
+
   const meridiem = hour < 12 ? "AM" : "PM"
   const displayHour = hour % 12 === 0 ? 12 : hour % 12
   return `${String(displayHour).padStart(2, "0")}:${minute} ${meridiem}`

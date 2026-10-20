@@ -70,6 +70,26 @@ describe("time vocabulary", () => {
     expect(formatTimeForDisplay("23:59")).toBe("11:59 PM")
   })
 
+  it("formats canonical times as zero-padded 24-hour display times", () => {
+    expect(formatTimeForDisplay("00:00", "24h")).toBe("00:00")
+    expect(formatTimeForDisplay("08:00", "24h")).toBe("08:00")
+    expect(formatTimeForDisplay("12:00", "24h")).toBe("12:00")
+    expect(formatTimeForDisplay("20:30", "24h")).toBe("20:30")
+    expect(formatTimeForDisplay("23:59", "24h")).toBe("23:59")
+  })
+
+  it("defaults to the 12-hour format", () => {
+    expect(formatTimeForDisplay("00:00")).toBe(formatTimeForDisplay("00:00", "12h"))
+    expect(formatTimeForDisplay("12:00")).toBe(formatTimeForDisplay("12:00", "12h"))
+    expect(formatTimeForDisplay("23:59")).toBe(formatTimeForDisplay("23:59", "12h"))
+  })
+
+  it("returns an invalid time unchanged in either format", () => {
+    expect(formatTimeForDisplay("noon", "12h")).toBe("noon")
+    expect(formatTimeForDisplay("noon", "24h")).toBe("noon")
+    expect(formatTimeForDisplay("24:00", "24h")).toBe("24:00")
+  })
+
   it("derives the period at its boundaries, with Night spanning midnight", () => {
     expect(periodFromTime("00:00")).toBe("Night")
     expect(periodFromTime("04:59")).toBe("Night")

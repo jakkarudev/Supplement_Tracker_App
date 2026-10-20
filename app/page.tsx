@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react"
 import { CalendarCheck, Plus, BarChart3, Boxes, Leaf } from "lucide-react"
 import { Toaster } from "@/components/ui/sonner"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { TimeFormatToggle } from "@/components/time-format-toggle"
 import { TodayRoutine } from "@/components/today-routine"
 import { SupplementForm } from "@/components/supplement-form"
 import { BiomarkerDashboard } from "@/components/biomarker-dashboard"
@@ -78,16 +79,21 @@ export default function Page() {
           ref={headerRef}
           className="glass sticky top-[max(0.5rem,var(--app-safe-top))] z-30 mb-4 flex items-center justify-between rounded-2xl px-3 py-2.5 sm:mb-6 sm:px-4 sm:py-3"
         >
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
               <Leaf className="h-5 w-5" />
             </span>
-            <div className="leading-tight">
+            <div className="min-w-0 leading-tight">
               <p className="text-sm font-semibold tracking-tight">Regimen</p>
-              <p className="text-xs text-muted-foreground">Supplement Tracker</p>
+              <p className="text-xs text-muted-foreground">
+                Supplement Tracker
+              </p>
             </div>
           </div>
-          <ThemeToggle />
+          <div className="flex shrink-0 items-center gap-2">
+            <TimeFormatToggle />
+            <ThemeToggle />
+          </div>
         </header>
 
         {/* Desktop / tablet tab bar */}

@@ -8,4 +8,4 @@ Supplement schedules and dose logs originally stored times as 12-hour display st
 
 - `migrateStoredAppState` normalizes legacy display times, dedupes each supplement's times, drops the stored `period`, and discards invalid times and logs.
 - Notification IDs change because the ID hash includes the time. `syncSupplementReminders` cancels every `supplement-reminder` by kind before scheduling, so old notifications do not survive.
-- Display stays 12-hour. `formatTimeForDisplay` is the only place that produces `"08:00 AM"`.
+- Stored times stay canonical 24-hour `HH:mm`. The display clock is the user's Time Format preference, 12-hour or 24-hour, and `formatTimeForDisplay` remains the only place that formats a stored time for display.

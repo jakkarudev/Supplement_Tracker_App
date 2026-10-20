@@ -15,7 +15,8 @@ import {
   type Supplement,
   type WellnessLog,
 } from "@/lib/supplements-data"
-import type { AppState } from "@/lib/app-state"
+import type { AppState, Settings } from "@/lib/app-state"
+import { DEFAULT_SETTINGS } from "@/lib/app-state"
 import { nanoid } from "@/lib/nanoid"
 import {
   scheduleNativeSupplementReminders,
@@ -38,6 +39,7 @@ import {
 import {
   totalDroppedRecords,
   totalRepairedRecords,
+  totalRepairedSettings,
 } from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
 import { buildInventory } from "@/lib/inventory"
@@ -46,7 +48,9 @@ import {
   addDays,
   dayRegimen,
   formatCalendarDate,
+  formatTimeForDisplay,
   today,
+  type TimeFormat,
 } from "@/lib/day-regimen"
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -63,6 +67,7 @@ export type Action =
   | { type: "DELETE_SUPPLEMENT"; payload: string }
   | { type: "LOG_DOSE"; payload: LogDoseInput }
   | { type: "LOG_WELLNESS"; payload: WellnessLog }
+  | { type: "SET_TIME_FORMAT"; payload: TimeFormat }
 
 // ─── Reducer ──────────────────────────────────────────────────────────────────
 
@@ -97,6 +102,12 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, wellnessLogs: newLogs }
     }
 
+    case "SET_TIME_FORMAT":
+      return {
+        ...state,
+        settings: { ...state.settings, timeFormat: action.payload },
+      }
+
     default:
       return state
   }
@@ -108,6 +119,7 @@ const INITIAL_STATE: AppState = {
   supplements: [],
   doseLogs: [],
   wellnessLogs: [],
+  settings: { ...DEFAULT_SETTINGS },
 }
 
 // The seam instance the provider hydrates and persists through.
@@ -140,6 +152,12 @@ const SAVE_FAILURE_DESCRIPTIONS: Record<SaveFailureReason, string> = {
 const StateCtx = createContext<AppState>(INITIAL_STATE)
 const DispatchCtx = createContext<React.Dispatch<Action>>(() => {})
 
+/**
+ * The app state context, exported so a test can supply state without the
+ * storage-backed provider and everything it brings along.
+ */
+export const AppStateContext = StateCtx
+
 /** Compile-time exhaustiveness guard for discriminated unions. */
 function assertNever(value: never): never {
   throw new Error(`Unexpected load status: ${String(value)}`)
@@ -159,6 +177,21 @@ function recordCountWithVerb(count: number): string {
 function recoverySummary(backupKey: string, counts: RecoveryCounts): string {
   const dropped = totalDroppedRecords(counts.dropped)
   const repaired = totalRepairedRecords(counts.repaired)
+  const repairedSettings = totalRepairedSettings(counts.repaired)
+
+  // A repaired display setting is not a repaired record, so it gets its own
+  // words: the user chose a format, and this says what happened to it.
+  if (repairedSettings > 0) {
+    const repairs =
+      repaired > 0
+        ? `${recordCountWithVerb(repaired)} repaired; the time display setting was reset to 12-hour`
+        : "the time display setting was reset to 12-hour"
+
+    if (dropped > 0) {
+      return `Recovered your data; ${recordCountWithVerb(dropped)} dropped and ${repairs}. Backup saved as ${backupKey}.`
+    }
+    return `Cleaned up your stored data; ${repairs}. Backup saved as ${backupKey}.`
+  }
 
   if (dropped > 0 && repaired > 0) {
     return `Recovered your data; ${recordCountWithVerb(dropped)} dropped and ${repaired} repaired. Backup saved as ${backupKey}.`
@@ -399,6 +432,30 @@ export function useAppState() {
 
 export function useAppDispatch() {
   return useContext(DispatchCtx)
+}
+
+/**
+ * The stored display preference, or the default when the state carries no
+ * settings to read.
+ */
+function timeFormatOf(settings: Settings | undefined): TimeFormat {
+  return settings?.timeFormat ?? DEFAULT_SETTINGS.timeFormat
+}
+
+/**
+ * The user's time display preference and a formatter bound to it, so a view
+ * shows times in the chosen format without threading the format through props.
+ */
+export function useTimeFormat() {
+  const { settings } = useAppState()
+  const timeFormat = timeFormatOf(settings)
+
+  const formatTime = useCallback(
+    (time: string) => formatTimeForDisplay(time, timeFormat),
+    [timeFormat],
+  )
+
+  return { timeFormat, formatTime }
 }
 
 /** Returns the current inventory read model: sorted rows, forecasts, and summary counts. */

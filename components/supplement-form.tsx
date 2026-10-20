@@ -529,6 +529,12 @@ export function SupplementForm({ editingId, onDone }: Props) {
               <div className="space-y-2">
                 {timeInputs.map((t, idx) => (
                   <div key={idx} className="grid grid-cols-[1fr_44px] items-center gap-2 sm:flex">
+                    {/*
+                      The native time picker follows the browser and OS
+                      convention, so it may still show AM/PM while the app is
+                      set to 24-hour. The in-app preference cannot override it;
+                      a custom picker would.
+                    */}
                     <Input
                       type="time"
                       value={t}

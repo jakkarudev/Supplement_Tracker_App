@@ -6,12 +6,11 @@ import { WeekStrip } from "@/components/week-strip"
 import { StatusBadge } from "@/components/status-badge"
 import { SlideToConfirm } from "@/components/slide-to-confirm"
 import { DoseTimeSheet } from "@/components/dose-time-sheet"
-import { useAppState, useAppDispatch } from "@/lib/app-context"
+import { useAppState, useAppDispatch, useTimeFormat } from "@/lib/app-context"
 import type { DoseStatus } from "@/lib/supplements-data"
 import {
   dayRegimen,
   formatCalendarDate,
-  formatTimeForDisplay,
   timeOfDayFrom,
   today,
   type CalendarDate,
@@ -41,6 +40,7 @@ type TodayRoutineProps = {
 export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineProps) {
   const { supplements, doseLogs } = useAppState()
   const dispatch = useAppDispatch()
+  const { formatTime } = useTimeFormat()
   const todayDate = today()
   const isToday = selectedDate === todayDate
   const [timeSheet, setTimeSheet] = useState<TimeSheetState | null>(null)
@@ -193,7 +193,7 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
                     <div>
                       <h3 className="text-sm font-semibold leading-tight">{period}</h3>
                       <p className="text-xs text-muted-foreground tabular-nums">
-                        {formatTimeForDisplay(items[0].time)}
+                        {formatTime(items[0].time)}
                       </p>
                     </div>
                   </div>
@@ -270,6 +270,8 @@ function DoseCard({
   onCorrectTime,
   onUndo,
 }: DoseCardProps) {
+  const { formatTime } = useTimeFormat()
+
   return (
     <div
       className={cn(
@@ -301,16 +303,16 @@ function DoseCard({
           {takenAt ? (
             readOnly ? (
               <span className="text-xs font-medium text-muted-foreground">
-                Taken at {formatTimeForDisplay(takenAt)}
+                Taken at {formatTime(takenAt)}
               </span>
             ) : (
               <button
                 type="button"
                 onClick={onCorrectTime}
-                aria-label={`Taken at ${formatTimeForDisplay(takenAt)}`}
+                aria-label={`Taken at ${formatTime(takenAt)}`}
                 className="rounded-full text-xs font-medium text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
               >
-                Taken at {formatTimeForDisplay(takenAt)}
+                Taken at {formatTime(takenAt)}
               </button>
             )
           ) : (

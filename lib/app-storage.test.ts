@@ -37,6 +37,7 @@ const canonicalState: AppState = {
     },
   ],
   wellnessLogs: [{ date: "2026-05-01", energy: 7, focus: 8 }],
+  settings: { timeFormat: "12h" },
 }
 
 type MemoryAdapter = StorageAdapter & {
@@ -100,10 +101,11 @@ const EMPTY_STATE: AppState = {
   supplements: [],
   doseLogs: [],
   wellnessLogs: [],
+  settings: { timeFormat: "12h" },
 }
 
 const NO_DROPS = { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
-const NO_REPAIRS = { supplements: 0, doseLogs: 0, wellnessLogs: 0 }
+const NO_REPAIRS = { supplements: 0, doseLogs: 0, wellnessLogs: 0, settings: 0 }
 
 const BACKUP_KEY_PATTERN = /^regimen-v1\.corrupt\.\d{4}-\d{2}-\d{2}T[\d:.]+Z$/
 
@@ -155,7 +157,7 @@ describe("createAppStorage", () => {
     })
 
     it("loads canonical data as ok without reporting a migration", () => {
-      const raw = JSON.stringify({ schemaVersion: 2, ...canonicalState })
+      const raw = JSON.stringify({ schemaVersion: 3, ...canonicalState })
       const adapter = createMemoryAdapter({ initial: raw })
       const storage = createAppStorage(adapter)
 
@@ -204,6 +206,7 @@ describe("createAppStorage", () => {
           ],
           doseLogs: canonicalState.doseLogs,
           wellnessLogs: canonicalState.wellnessLogs,
+          settings: { timeFormat: "12h" },
         },
         migratedFrom: 0,
       })
@@ -253,12 +256,55 @@ describe("createAppStorage", () => {
         ...takenAtState,
         doseLogs: [{ ...takenAtState.doseLogs[0], takenAt: "10:20" }],
       }
-      adapter.store(JSON.stringify({ schemaVersion: 2, ...corrected }))
+      adapter.store(JSON.stringify({ schemaVersion: 3, ...corrected }))
       adapter.emit()
 
       expect(results).toEqual([
         { status: "ok", state: corrected, migratedFrom: null },
       ])
+    })
+  })
+
+  describe("time format preference", () => {
+    const twentyFourHourState: AppState = {
+      ...canonicalState,
+      settings: { timeFormat: "24h" },
+    }
+
+    it("survives save and load", () => {
+      const adapter = createMemoryAdapter()
+      const storage = createAppStorage(adapter)
+
+      expect(storage.saveState(twentyFourHourState)).toEqual({ status: "saved" })
+      expect(storage.loadState()).toEqual({
+        status: "ok",
+        state: twentyFourHourState,
+        migratedFrom: null,
+      })
+    })
+
+    it("survives an external write adoption", () => {
+      const adapter = createMemoryAdapter()
+      const storage = createAppStorage(adapter)
+      const results: LoadStateResult[] = []
+      storage.subscribe((result) => results.push(result))
+
+      adapter.store(JSON.stringify({ schemaVersion: 3, ...twentyFourHourState }))
+      adapter.emit()
+
+      expect(results).toEqual([
+        { status: "ok", state: twentyFourHourState, migratedFrom: null },
+      ])
+    })
+
+    it("is written into the stored payload", () => {
+      const adapter = createMemoryAdapter()
+      const storage = createAppStorage(adapter)
+
+      expect(storage.saveState(twentyFourHourState)).toEqual({ status: "saved" })
+
+      const payload = JSON.parse(adapter.stored() ?? "")
+      expect(payload.settings).toEqual({ timeFormat: "24h" })
     })
   })
 
@@ -279,7 +325,8 @@ describe("createAppStorage", () => {
 
     it("recovers dropped records with per-collection counts and a backup", () => {
       const raw = JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
+        settings: { timeFormat: "12h" },
         supplements: [
           canonicalState.supplements[0],
           { name: "missing id and form" },
@@ -311,7 +358,7 @@ describe("createAppStorage", () => {
 
       expect(storage.saveState(load.state)).toEqual({ status: "saved" })
       expect(JSON.parse(adapter.stored() ?? "")).toEqual({
-        schemaVersion: 2,
+        schemaVersion: 3,
         ...canonicalState,
       })
     })
@@ -325,7 +372,8 @@ describe("createAppStorage", () => {
         status: "taken" as const,
       }
       const raw = JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
+        settings: { timeFormat: "12h" },
         supplements: [
           canonicalState.supplements[0],
           { ...canonicalState.supplements[0], id: "gummy", form: "Gummy" },
@@ -355,16 +403,18 @@ describe("createAppStorage", () => {
 
       expect(storage.saveState(load.state)).toEqual({ status: "saved" })
       expect(JSON.parse(adapter.stored() ?? "")).toEqual({
-        schemaVersion: 2,
+        schemaVersion: 3,
         supplements: [canonicalState.supplements[0]],
         doseLogs: [...canonicalState.doseLogs, orphanedLog],
         wellnessLogs: canonicalState.wellnessLogs,
+        settings: { timeFormat: "12h" },
       })
     })
 
     it("recovers repaired records with counts, a backup, and a clean write-back", () => {
       const raw = JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
+        settings: { timeFormat: "12h" },
         supplements: [
           {
             ...canonicalState.supplements[0],
@@ -397,13 +447,14 @@ describe("createAppStorage", () => {
         supplements: 1,
         doseLogs: 1,
         wellnessLogs: 0,
+        settings: 0,
       })
       expect(adapter.stored(load.backupKey)).toBe(raw)
       expect(adapter.setAttempts).toEqual([load.backupKey])
 
       expect(storage.saveState(load.state)).toEqual({ status: "saved" })
       expect(JSON.parse(adapter.stored() ?? "")).toEqual({
-        schemaVersion: 2,
+        schemaVersion: 3,
         ...load.state,
       })
 
@@ -415,7 +466,8 @@ describe("createAppStorage", () => {
 
     it("recovers a payload with both drops and repairs, carrying both counts", () => {
       const raw = JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
+        settings: { timeFormat: "12h" },
         supplements: [
           canonicalState.supplements[0],
           { ...canonicalState.supplements[0], id: "repair-me", days: [7] },
@@ -437,6 +489,7 @@ describe("createAppStorage", () => {
         supplements: 1,
         doseLogs: 0,
         wellnessLogs: 0,
+        settings: 0,
       })
       expect(load.state.supplements).toHaveLength(2)
       expect(adapter.stored(load.backupKey)).toBe(raw)
@@ -472,7 +525,8 @@ describe("createAppStorage", () => {
       const payloads = [
         "{ not json",
         JSON.stringify({
-          schemaVersion: 2,
+          schemaVersion: 3,
+          settings: { timeFormat: "12h" },
           supplements: [canonicalState.supplements[0], "not a supplement"],
           doseLogs: [],
           wellnessLogs: [],
@@ -506,7 +560,7 @@ describe("createAppStorage", () => {
       expect(storage.saveState(load.state)).toEqual({ status: "saved" })
 
       expect(JSON.parse(adapter.stored() ?? "")).toEqual({
-        schemaVersion: 2,
+        schemaVersion: 3,
         ...EMPTY_STATE,
       })
     })
@@ -529,7 +583,7 @@ describe("createAppStorage", () => {
     it("recovers a payload whose collection is present but not an array", () => {
       const cases: Array<{ raw: string; state: AppState }> = [
         {
-          raw: JSON.stringify({ schemaVersion: 2, supplements: "x" }),
+          raw: JSON.stringify({ schemaVersion: 3, supplements: "x" }),
           state: EMPTY_STATE,
         },
         {
@@ -541,7 +595,8 @@ describe("createAppStorage", () => {
         },
         {
           raw: JSON.stringify({
-            schemaVersion: 2,
+            schemaVersion: 3,
+            settings: { timeFormat: "12h" },
             supplements: "not an array",
             doseLogs: canonicalState.doseLogs,
             wellnessLogs: canonicalState.wellnessLogs,
@@ -550,6 +605,7 @@ describe("createAppStorage", () => {
             supplements: [],
             doseLogs: canonicalState.doseLogs,
             wellnessLogs: canonicalState.wellnessLogs,
+            settings: { timeFormat: "12h" },
           },
         },
       ]
@@ -570,7 +626,7 @@ describe("createAppStorage", () => {
 
   describe("guarded loads", () => {
     it("returns incompatible with a newer stored version, takes no backup, and never writes", () => {
-      for (const version of [3, 99, 2.5]) {
+      for (const version of [4, 99, 3.5]) {
         const raw = JSON.stringify({ schemaVersion: version, ...canonicalState })
         const adapter = createMemoryAdapter({ initial: raw })
         const storage = createAppStorage(adapter)
@@ -611,7 +667,7 @@ describe("createAppStorage", () => {
 
       const unsubscribe = storage.subscribe((result) => results.push(result))
 
-      adapter.store(JSON.stringify({ schemaVersion: 2, ...canonicalState }))
+      adapter.store(JSON.stringify({ schemaVersion: 3, ...canonicalState }))
       adapter.emit()
 
       expect(results).toEqual([
@@ -652,11 +708,11 @@ describe("createAppStorage", () => {
       const results: LoadStateResult[] = []
       storage.subscribe((result) => results.push(result))
 
-      const raw = JSON.stringify({ schemaVersion: 3, ...canonicalState })
+      const raw = JSON.stringify({ schemaVersion: 4, ...canonicalState })
       adapter.store(raw)
       adapter.emit()
 
-      expect(results).toEqual([{ status: "incompatible", version: 3 }])
+      expect(results).toEqual([{ status: "incompatible", version: 4 }])
       expect(storage.saveState(canonicalState).status).toBe("failed")
       expect(adapter.stored()).toBe(raw)
     })
@@ -669,7 +725,7 @@ describe("createAppStorage", () => {
       const unsubscribe = storage.subscribe((result) => results.push(result))
       unsubscribe()
 
-      adapter.store(JSON.stringify({ schemaVersion: 2, ...canonicalState }))
+      adapter.store(JSON.stringify({ schemaVersion: 3, ...canonicalState }))
       adapter.emit()
 
       expect(results).toEqual([])
@@ -691,7 +747,7 @@ describe("createAppStorage", () => {
       storage.subscribe((result) => first.push(result))
       storage.subscribe((result) => second.push(result))
 
-      adapter.store(JSON.stringify({ schemaVersion: 2, ...canonicalState }))
+      adapter.store(JSON.stringify({ schemaVersion: 3, ...canonicalState }))
       adapter.emit()
 
       expect(registrations).toBe(1)
@@ -703,7 +759,7 @@ describe("createAppStorage", () => {
   describe("refresh", () => {
     it("notifies only when the stored payload changed since the last load", () => {
       const adapter = createMemoryAdapter({
-        initial: JSON.stringify({ schemaVersion: 2, ...canonicalState }),
+        initial: JSON.stringify({ schemaVersion: 3, ...canonicalState }),
       })
       const storage = createAppStorage(adapter)
       const results: LoadStateResult[] = []
@@ -715,7 +771,7 @@ describe("createAppStorage", () => {
       expect(results).toEqual([])
 
       const nextState: AppState = { ...canonicalState, wellnessLogs: [] }
-      adapter.store(JSON.stringify({ schemaVersion: 2, ...nextState }))
+      adapter.store(JSON.stringify({ schemaVersion: 3, ...nextState }))
       storage.refresh()
 
       expect(results).toEqual([
@@ -740,7 +796,7 @@ describe("createAppStorage", () => {
 
     it("treats a cleared store as a change", () => {
       const adapter = createMemoryAdapter({
-        initial: JSON.stringify({ schemaVersion: 2, ...canonicalState }),
+        initial: JSON.stringify({ schemaVersion: 3, ...canonicalState }),
       })
       const storage = createAppStorage(adapter)
       const results: LoadStateResult[] = []
@@ -766,7 +822,7 @@ describe("createAppStorage", () => {
     it("retries a storage-blocked load and re-enables writes", () => {
       const options: { getError?: unknown } = {}
       const adapter = createMemoryAdapter(options)
-      adapter.store(JSON.stringify({ schemaVersion: 2, ...canonicalState }))
+      adapter.store(JSON.stringify({ schemaVersion: 3, ...canonicalState }))
       const storage = createAppStorage(adapter)
 
       expect(storage.loadState()).toEqual({
@@ -795,13 +851,13 @@ describe("createAppStorage", () => {
     })
 
     it("does not retry an unchanged payload from a newer build", () => {
-      const raw = JSON.stringify({ schemaVersion: 3, ...canonicalState })
+      const raw = JSON.stringify({ schemaVersion: 4, ...canonicalState })
       const adapter = createMemoryAdapter({ initial: raw })
       const storage = createAppStorage(adapter)
       const results: LoadStateResult[] = []
       storage.subscribe((result) => results.push(result))
 
-      expect(storage.loadState()).toEqual({ status: "incompatible", version: 3 })
+      expect(storage.loadState()).toEqual({ status: "incompatible", version: 4 })
 
       storage.refresh()
 
@@ -823,8 +879,9 @@ describe("createAppStorage", () => {
         "supplements",
         "doseLogs",
         "wellnessLogs",
+        "settings",
       ])
-      expect(payload).toEqual({ schemaVersion: 2, ...canonicalState })
+      expect(payload).toEqual({ schemaVersion: 3, ...canonicalState })
     })
 
     it("classifies save failures by reason and carries the error", () => {

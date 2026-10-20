@@ -12,8 +12,8 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useTimeFormat } from "@/lib/app-context"
 import {
-  formatTimeForDisplay,
   isRecordableIntakeTime,
   normalizeTimeOfDay,
   today,
@@ -49,6 +49,7 @@ export function DoseTimeSheet({
   // also the starting draft.
   const [value, setValue] = useState(initialTime)
   const [error, setError] = useState<string | null>(null)
+  const { formatTime } = useTimeFormat()
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -78,13 +79,18 @@ export function DoseTimeSheet({
         <DialogHeader>
           <DialogTitle>{TITLES[mode]}</DialogTitle>
           <DialogDescription>
-            Scheduled for {formatTimeForDisplay(scheduledTime)}.
+            Scheduled for {formatTime(scheduledTime)}.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="dose-actual-time">Actual time</Label>
+            {/*
+              The native time picker follows the browser and OS convention, so
+              it may still show AM/PM while the app is set to 24-hour. The
+              in-app preference cannot override it; a custom picker would.
+            */}
             <Input
               id="dose-actual-time"
               type="time"
