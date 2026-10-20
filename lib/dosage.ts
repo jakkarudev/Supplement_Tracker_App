@@ -38,10 +38,24 @@ export function formatDosage(form: SupplementForm, value: string): string {
   return `${clean} ${unit}`
 }
 
+/**
+ * Whether a stored or typed dosage is a positive number, whole, decimal, or
+ * fractional ("1/2"). Zero, negatives, and unreadable values are not amounts.
+ */
+export function isValidDosageAmount(value: string): boolean {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)(?:\/(\d+(?:\.\d+)?))?$/)
+  if (!match) return false
+  const numerator = Number(match[1])
+  const denominator = match[2] === undefined ? 1 : Number(match[2])
+  return numerator > 0 && denominator > 0
+}
+
 export function parseDosageValueForForm(form: SupplementForm, dosage: string): string {
   const value = dosage.trim().split(/\s+/)[0] ?? ""
   if (isSolidForm(form)) {
-    return SOLID_DOSAGE_OPTIONS.includes(value) ? value : ""
+    // A stored dosage outside the fixed options (e.g. "1.5 capsules" from an
+    // older build) stays selected so the record can be saved unchanged.
+    return isValidDosageAmount(value) ? value : ""
   }
   return value
 }
