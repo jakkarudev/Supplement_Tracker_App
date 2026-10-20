@@ -18,6 +18,10 @@ _Avoid_: stack, routine
 The rules that determine when a supplement produces a scheduled dose: weekdays, times, start date, duration, and cycle.
 _Avoid_: regimen, plan
 
+**Form**:
+The physical presentation of a supplement — Capsule, Tablet, Liquid, or Powder — and the unit its dosage and inventory are counted in.
+_Avoid_: type, kind, dosage form
+
 **Dosage**:
 The amount and form instructions for one dose of a supplement.
 _Avoid_: dose, amount
