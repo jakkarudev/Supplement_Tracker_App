@@ -10,7 +10,7 @@ import {
 } from "recharts"
 import { Flame, TrendingUp, AlertTriangle, ArrowUpRight } from "lucide-react"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
-import { useAdherenceStats } from "@/lib/app-context"
+import { useAdherenceStats, useInventory } from "@/lib/app-context"
 import { WellnessCheckin } from "@/components/wellness-checkin"
 import { cn } from "@/lib/utils"
 
@@ -53,7 +53,12 @@ const chartConfig = {
 }
 
 export function BiomarkerDashboard() {
-  const { adherenceRate, streak, chartData, lowStock } = useAdherenceStats()
+  const { adherenceRate, streak, chartData } = useAdherenceStats()
+  const { rows, summary } = useInventory()
+  const lowStockNames = rows
+    .filter((row) => row.lowStock)
+    .map((row) => row.supplement.name.split(" ")[0])
+    .join(", ")
 
   return (
     <div className="space-y-6">
@@ -85,8 +90,8 @@ export function BiomarkerDashboard() {
         <div className="col-span-2 sm:col-span-1">
           <StatCard
             label="Low Stock Warning"
-            value={`${lowStock.length} bottle${lowStock.length !== 1 ? "s" : ""}`}
-            sub={lowStock.length ? lowStock.map((s) => s.name.split(" ")[0]).join(", ") : "All stocked"}
+            value={`${summary.lowStock} supplement${summary.lowStock !== 1 ? "s" : ""}`}
+            sub={summary.lowStock ? lowStockNames : "All stocked"}
             icon={AlertTriangle}
             accent="destructive"
           />

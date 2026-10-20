@@ -35,6 +35,7 @@ import {
   SOLID_DOSAGE_OPTIONS,
   dosageUnitForForm,
   formatDosage,
+  inventoryUnitPlural,
   isSolidForm,
   parseDosageValueForForm,
 } from "@/lib/dosage"
@@ -82,10 +83,10 @@ const schema = z.object({
   restockReminder: z.boolean().default(true),
   restockThreshold: z.coerce.number().min(1).default(10),
 }).refine((v) => v.currentCount <= v.totalCount, {
-  message: "Current count cannot exceed total count",
+  message: "Current amount cannot exceed the full amount",
   path: ["currentCount"],
 }).refine((v) => !v.restockReminder || v.restockThreshold <= v.totalCount, {
-  message: "Threshold cannot exceed total count",
+  message: "Threshold cannot exceed the full amount",
   path: ["restockThreshold"],
 }).refine((v) => !isSolidForm(v.form) || SOLID_DOSAGE_OPTIONS.includes(v.dosage), {
   message: "Choose a dosage",
@@ -647,7 +648,7 @@ export function SupplementForm({ editingId, onDone }: Props) {
         <SectionCard
           icon={Boxes}
           title="Smart inventory"
-          description="Track your bottle and get restock reminders."
+          description="Track what you have on hand and get low-stock warnings."
         >
           <div className="space-y-5">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -656,7 +657,7 @@ export function SupplementForm({ editingId, onDone }: Props) {
                 name="totalCount"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Total capsules in bottle</FormLabel>
+                    <FormLabel>Full amount ({inventoryUnitPlural(watchForm)})</FormLabel>
                     <FormControl>
                       <Input type="number" min={0} {...field} />
                     </FormControl>
@@ -668,7 +669,7 @@ export function SupplementForm({ editingId, onDone }: Props) {
                 name="currentCount"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Current count</FormLabel>
+                    <FormLabel>Current amount ({inventoryUnitPlural(watchForm)})</FormLabel>
                     <FormControl>
                       <Input type="number" min={0} {...field} />
                     </FormControl>
@@ -705,14 +706,14 @@ export function SupplementForm({ editingId, onDone }: Props) {
                 <FormItem>
                   <div className="flex items-center justify-between gap-4 rounded-2xl border border-border bg-card/50 p-4">
                     <div>
-                      <p className="text-sm font-medium">Remind me to restock</p>
-                      <p className="text-xs text-muted-foreground">Get an alert before you run out.</p>
+                      <p className="text-sm font-medium">Restock alert</p>
+                      <p className="text-xs text-muted-foreground">Show a warning when this supplement is low stock.</p>
                     </div>
                     <FormControl>
                       <Switch
                         checked={field.value}
                         onCheckedChange={field.onChange}
-                        aria-label="Restock reminder"
+                        aria-label="Restock alert"
                       />
                     </FormControl>
                   </div>
@@ -736,7 +737,7 @@ export function SupplementForm({ editingId, onDone }: Props) {
                   <FormControl>
                     <Input type="number" min={1} {...field} className="h-9 w-20 text-center" />
                   </FormControl>
-                  <span className="text-sm text-muted-foreground">capsules left</span>
+                  <span className="text-sm text-muted-foreground">{inventoryUnitPlural(watchForm)} left</span>
                 </FormItem>
               )}
             />

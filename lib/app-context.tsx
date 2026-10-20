@@ -40,6 +40,7 @@ import {
   totalRepairedRecords,
 } from "@/lib/storage-migration"
 import { summarizeAdherence } from "@/lib/adherence"
+import { buildInventory } from "@/lib/inventory"
 import {
   addDays,
   dayRegimen,
@@ -399,6 +400,14 @@ export function useAppDispatch() {
   return useContext(DispatchCtx)
 }
 
+/** Returns the current inventory read model: sorted rows plus summary counts. */
+export function useInventory() {
+  const { supplements } = useAppState()
+  const date = today()
+
+  return useMemo(() => buildInventory(supplements, date), [supplements, date])
+}
+
 /** Returns 7-day adherence stats and chart data derived from stored logs. */
 export function useAdherenceStats() {
   const { supplements, doseLogs, wellnessLogs } = useAppState()
@@ -427,11 +436,7 @@ export function useAdherenceStats() {
       }
     })
 
-    const lowStock = supplements.filter(
-      (s) => s.restockReminder && s.currentCount <= s.restockThreshold,
-    )
-
-    return { adherenceRate, streak, chartData, lowStock }
+    return { adherenceRate, streak, chartData }
   }, [supplements, doseLogs, wellnessLogs])
 }
 

@@ -12,8 +12,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { useAppState, useAppDispatch } from "@/lib/app-context"
-import type { Supplement } from "@/lib/supplements-data"
+import { useAppDispatch, useInventory } from "@/lib/app-context"
+import { inventoryUnitLabel } from "@/lib/dosage"
+import type { InventoryRow } from "@/lib/inventory"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useEffect, useState } from "react"
@@ -45,14 +46,16 @@ type Props = {
   onEdit?: (id: string) => void
 }
 
+const GROUPS: { state: InventoryRow["courseState"]; label: string }[] = [
+  { state: "current", label: "Current" },
+  { state: "upcoming", label: "Upcoming" },
+  { state: "finished", label: "Finished" },
+]
+
 export function InventoryHub({ onEdit }: Props) {
-  const { supplements } = useAppState()
-  const sorted = [...supplements].sort((a, b) => {
-    const ra = a.totalCount > 0 ? a.currentCount / a.totalCount : 0
-    const rb = b.totalCount > 0 ? b.currentCount / b.totalCount : 0
-    return ra - rb
-  })
-  const lowStockCount = supplements.filter((s) => s.restockReminder && s.currentCount <= s.restockThreshold).length
+  const { rows, summary } = useInventory()
+  const showGroupHeadings = summary.upcoming > 0 || summary.finished > 0
+  const restockVerb = summary.lowStock === 1 ? "needs restocking" : "need restocking"
 
   return (
     <div className="space-y-6">
@@ -60,34 +63,46 @@ export function InventoryHub({ onEdit }: Props) {
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Inventory</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {supplements.length} active bottles · {lowStockCount} need restocking
+            {summary.current} current · {summary.lowStock} {restockVerb}
           </p>
         </div>
       </div>
 
-      <div className="space-y-3">
-        {sorted.map((supp) => (
-          <InventoryRow key={supp.id} supplement={supp} onEdit={onEdit} />
-        ))}
+      <div className="space-y-6">
+        {GROUPS.map(({ state, label }) => {
+          const groupRows = rows.filter((row) => row.courseState === state)
+          if (groupRows.length === 0) return null
+
+          return (
+            <section key={state} className="space-y-3">
+              {showGroupHeadings && (
+                <h3 className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {label} · {groupRows.length}
+                </h3>
+              )}
+              {groupRows.map((row) => (
+                <InventoryItem key={row.supplement.id} row={row} onEdit={onEdit} />
+              ))}
+            </section>
+          )
+        })}
       </div>
     </div>
   )
 }
 
-function InventoryRow({
-  supplement,
+function InventoryItem({
+  row,
   onEdit,
 }: {
-  supplement: Supplement
+  row: InventoryRow
   onEdit?: (id: string) => void
 }) {
   const dispatch = useAppDispatch()
   const isMobile = useIsMobile()
-  const pct =
-    supplement.totalCount > 0
-      ? Math.max(0, Math.round((supplement.currentCount / supplement.totalCount) * 100))
-      : 0
-  const isLow = supplement.restockReminder && supplement.currentCount <= supplement.restockThreshold
+  const { supplement, courseState, percent, lowStock, overdrawn } = row
+  const needsAttention = lowStock || overdrawn
+  const unit = inventoryUnitLabel(supplement.form, supplement.totalCount)
 
   function handleDelete() {
     dispatch({ type: "DELETE_SUPPLEMENT", payload: supplement.id })
@@ -98,14 +113,14 @@ function InventoryRow({
     <div
       className={cn(
         "glass rounded-[1.25rem] p-4 transition-all sm:rounded-3xl sm:p-5",
-        isLow && "ring-1 ring-destructive/30",
+        needsAttention && "ring-1 ring-destructive/30",
       )}
     >
       <div className="flex items-start gap-4">
         <span
           className={cn(
             "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl",
-            isLow ? "bg-destructive/12 text-destructive" : "bg-secondary text-foreground",
+            needsAttention ? "bg-destructive/12 text-destructive" : "bg-secondary text-foreground",
           )}
         >
           <Pill className="h-5.5 w-5.5" />
@@ -115,11 +130,19 @@ function InventoryRow({
           <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <h3 className="line-clamp-2 text-[0.95rem] font-semibold leading-tight">{supplement.name}</h3>
-              {isLow && (
+              {overdrawn ? (
+                <span className="rounded-full bg-destructive/12 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-destructive">
+                  Overdrawn
+                </span>
+              ) : lowStock ? (
                 <span className="rounded-full bg-destructive/12 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-destructive">
                   Low stock
                 </span>
-              )}
+              ) : courseState !== "current" ? (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-muted-foreground">
+                  {courseState === "upcoming" ? "Upcoming" : "Finished"}
+                </span>
+              ) : null}
             </div>
             {/* Action buttons */}
             <div className="flex items-center gap-1.5">
@@ -208,25 +231,25 @@ function InventoryRow({
               <div
                 className={cn(
                   "h-full rounded-full transition-all duration-500",
-                  isLow ? "bg-destructive" : pct < 50 ? "bg-accent" : "bg-primary",
+                  needsAttention ? "bg-destructive" : percent < 50 ? "bg-accent" : "bg-primary",
                 )}
-                style={{ width: `${pct}%` }}
+                style={{ width: `${percent}%` }}
               />
             </div>
             <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
-              {supplement.currentCount} / {supplement.totalCount}
+              {supplement.currentCount} / {supplement.totalCount} {unit}
             </span>
           </div>
         </div>
       </div>
 
-      {(isLow || supplement.purchaseUrl) && (
+      {(lowStock || supplement.purchaseUrl) && (
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           {supplement.purchaseUrl ? (
             <RestockButton
               name={supplement.name}
               href={supplement.purchaseUrl}
-              primary={isLow}
+              primary={lowStock}
             />
           ) : (
             <button

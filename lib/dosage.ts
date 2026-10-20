@@ -17,6 +17,16 @@ export function dosageUnitForForm(form: SupplementForm): string {
   return form.toLowerCase()
 }
 
+/** The plural inventory unit for a form, used in labels ("capsules", "ml", "g"). */
+export function inventoryUnitPlural(form: SupplementForm): string {
+  return isSolidForm(form) ? `${dosageUnitForForm(form)}s` : dosageUnitForForm(form)
+}
+
+/** The inventory unit for a form, singular only when the count is one. */
+export function inventoryUnitLabel(form: SupplementForm, count: number): string {
+  return count === 1 ? dosageUnitForForm(form) : inventoryUnitPlural(form)
+}
+
 export function formatDosage(form: SupplementForm, value: string): string {
   const clean = value.trim()
   if (!clean) return ""

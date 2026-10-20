@@ -8,7 +8,7 @@ A personal tracker for supplements, their schedules, and the doses actually take
 
 **Supplement**:
 A product a person tracks, with a dosage, a schedule, and an inventory count.
-_Avoid_: pill, product, item
+_Avoid_: pill, product, item, bottle
 
 **Regimen**:
 The set of supplements a person follows.
@@ -25,6 +25,22 @@ _Avoid_: dose, amount
 **Cycle**:
 An alternating pattern of active and break days in a supplement's schedule.
 _Avoid_: phase, rotation
+
+**Course Window**:
+The calendar dates from a supplement's start date through its duration, if it has one. Weekdays and cycle breaks do not narrow it.
+_Avoid_: active period, run
+
+**Current**:
+A supplement whose course window includes a given calendar date.
+_Avoid_: active, ongoing, in stock
+
+**Upcoming**:
+A supplement whose course window begins after a given calendar date.
+_Avoid_: scheduled, future
+
+**Finished**:
+A supplement whose course window ended before a given calendar date.
+_Avoid_: expired, ended, inactive
 
 ### Doses and logs
 
@@ -55,8 +71,24 @@ _Avoid_: check-in, mood log, rating
 ### Inventory
 
 **Inventory**:
-The amount of a supplement on hand, measured in the units of its dosage.
-_Avoid_: stock, count, supply
+The amount of a supplement on hand, measured in inventory units: capsules or tablets for solid forms, millilitres for liquids, grams for powders.
+_Avoid_: stock, count, supply, bottle
+
+**Restock Tracking**:
+The user's opt-in to restock alerts for a supplement.
+_Avoid_: restock reminder, stock monitoring
+
+**Restock Threshold**:
+The inventory level at or below which a supplement under restock tracking counts as low stock, measured in inventory units.
+_Avoid_: minimum, reorder point
+
+**Low Stock**:
+The state of a supplement under restock tracking whose inventory is at or below its restock threshold while its course is current.
+_Avoid_: running low, out of stock
+
+**Restock Alert**:
+A low-stock warning for a supplement the user opted into restock tracking. It is not a Reminder and sends no notification.
+_Avoid_: restock reminder, restock notification
 
 **Overdrawn**:
 The state of a supplement whose logged taken doses exceed its recorded inventory, leaving inventory below zero.

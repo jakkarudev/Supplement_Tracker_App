@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import type { DoseLog, Supplement } from "./supplements-data"
 import {
   addDays,
+  courseStateOn,
   dayOfWeek,
   dayRegimen,
   doseKey,
@@ -389,5 +390,42 @@ describe("upcomingScheduledDoses", () => {
 
   it("returns nothing for a zero-day horizon", () => {
     expect(upcomingScheduledDoses([makeSupplement()], "2026-05-04", 0)).toEqual([])
+  })
+})
+
+describe("courseStateOn", () => {
+  it("classifies upcoming, current, and finished course windows", () => {
+    expect(
+      courseStateOn(makeSupplement({ startedOn: "2026-05-11" }), "2026-05-10"),
+    ).toBe("upcoming")
+
+    const limited = makeSupplement({ startedOn: "2026-05-01", durationDays: 30 })
+    expect(courseStateOn(limited, "2026-05-30")).toBe("current")
+    expect(courseStateOn(limited, "2026-05-31")).toBe("finished")
+
+    expect(
+      courseStateOn(
+        makeSupplement({ startedOn: "2026-05-01", durationDays: undefined }),
+        "2030-01-01",
+      ),
+    ).toBe("current")
+  })
+
+  it("ignores weekdays and cycle breaks", () => {
+    // 2026-05-10 is a Sunday, and 2026-05-06 is the sixth day of a 5-on/2-off cycle.
+    expect(
+      courseStateOn(makeSupplement({ startedOn: "2026-05-01", days: [1] }), "2026-05-10"),
+    ).toBe("current")
+
+    expect(
+      courseStateOn(
+        makeSupplement({
+          startedOn: "2026-05-01",
+          cycleActiveDays: 5,
+          cycleBreakDays: 2,
+        }),
+        "2026-05-06",
+      ),
+    ).toBe("current")
   })
 })

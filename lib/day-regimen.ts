@@ -23,6 +23,9 @@ export type DayRegimen = {
   }
 }
 
+/** Where a supplement sits relative to its course window on a date. */
+export type CourseState = "upcoming" | "current" | "finished"
+
 const CANONICAL_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/
 const LEGACY_TIME = /^(\d{1,2}):([0-5]\d)\s*([AaPp][Mm])$/
 const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
@@ -42,11 +45,23 @@ function daysBetween(start: CalendarDate, end: CalendarDate): number {
   return Math.floor((b - a) / MILLISECONDS_PER_DAY)
 }
 
-function isSupplementActiveOnDate(supplement: Supplement, date: CalendarDate): boolean {
+/** Returns whether a supplement's course window is upcoming, current, or finished on a date. */
+export function courseStateOn(
+  supplement: Supplement,
+  date: CalendarDate,
+): CourseState {
   const elapsed = daysBetween(supplement.startedOn, date)
-  if (elapsed < 0) return false
-  if (supplement.durationDays !== undefined && elapsed >= supplement.durationDays) return false
+  if (elapsed < 0) return "upcoming"
+  if (supplement.durationDays !== undefined && elapsed >= supplement.durationDays) {
+    return "finished"
+  }
+  return "current"
+}
 
+function isSupplementActiveOnDate(supplement: Supplement, date: CalendarDate): boolean {
+  if (courseStateOn(supplement, date) !== "current") return false
+
+  const elapsed = daysBetween(supplement.startedOn, date)
   const activeDays = supplement.cycleActiveDays
   const breakDays = supplement.cycleBreakDays
   if (activeDays && breakDays) {

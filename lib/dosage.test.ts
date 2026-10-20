@@ -3,6 +3,8 @@ import {
   SOLID_DOSAGE_OPTIONS,
   dosageInventoryAmount,
   formatDosage,
+  inventoryUnitLabel,
+  inventoryUnitPlural,
   parseDosageValueForForm,
 } from "./dosage"
 
@@ -43,3 +45,19 @@ describe("dosageInventoryAmount", () => {
   })
 })
 
+
+describe("inventory units", () => {
+  it("pluralizes solid units and leaves liquid and powder units invariant", () => {
+    expect(inventoryUnitPlural("Capsule")).toBe("capsules")
+    expect(inventoryUnitPlural("Tablet")).toBe("tablets")
+    expect(inventoryUnitPlural("Liquid")).toBe("ml")
+    expect(inventoryUnitPlural("Powder")).toBe("g")
+  })
+
+  it("uses the singular unit only for a count of one", () => {
+    expect(inventoryUnitLabel("Capsule", 1)).toBe("capsule")
+    expect(inventoryUnitLabel("Capsule", 2)).toBe("capsules")
+    expect(inventoryUnitLabel("Liquid", 1)).toBe("ml")
+    expect(inventoryUnitLabel("Powder", 0)).toBe("g")
+  })
+})
