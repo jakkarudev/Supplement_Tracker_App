@@ -14,8 +14,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   formatTimeForDisplay,
-  isValidIntakeTime,
+  isRecordableIntakeTime,
   normalizeTimeOfDay,
+  today,
   type CalendarDate,
 } from "@/lib/day-regimen"
 
@@ -52,12 +53,17 @@ export function DoseTimeSheet({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
+    if (today() !== logicalDate) {
+      setError("The day has changed. Reopen this dose to log it.")
+      return
+    }
+
     const normalized = normalizeTimeOfDay(value)
     if (normalized === null) {
       setError("Enter a valid time.")
       return
     }
-    if (!isValidIntakeTime(logicalDate, normalized)) {
+    if (!isRecordableIntakeTime(logicalDate, normalized)) {
       setError("Enter a time that is not in the future.")
       return
     }
