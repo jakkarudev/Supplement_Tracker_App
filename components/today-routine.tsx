@@ -11,13 +11,14 @@ import type { DoseStatus } from "@/lib/supplements-data"
 import {
   dayRegimen,
   formatCalendarDate,
+  isRecordableIntakeTime,
   timeOfDayFrom,
   today,
   type CalendarDate,
   type Period,
   type ScheduledDose,
 } from "@/lib/day-regimen"
-import { buildSpacingPlan, type SpacingConflict } from "@/lib/spacing"
+import { buildSpacingPlan, intervalLabel, type SpacingConflict } from "@/lib/spacing"
 import { cn } from "@/lib/utils"
 
 type TimeSheetState = {
@@ -97,13 +98,17 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
     if (!isToday) return
 
     const entry = spacingPlan[item.key]
-    const shifted = entry !== undefined && entry.adjustedTime !== item.time
+    const adjustedTime = entry?.adjustedTime ?? item.time
+    const adjusted = adjustedTime !== item.time
 
     const initialTime =
       mode === "correct" && item.log?.takenAt
         ? item.log.takenAt
-        : shifted
-          ? entry.adjustedTime
+        : // The adjusted time is the sheet's suggestion, but only once it has
+          // arrived: a default in the future would be refused by the
+          // future-time check before the spacing refusal could say anything.
+          adjusted && isRecordableIntakeTime(item.date, adjustedTime)
+          ? adjustedTime
           : timeOfDayFrom(new Date())
     setTimeSheet({ dose: item, mode, initialTime })
   }
@@ -213,7 +218,7 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
                   <div className="ml-3 space-y-3 border-l border-dashed border-border pl-4 sm:ml-[1.1rem] sm:pl-6">
                     {items.map((item) => {
                       const entry = spacingPlan[item.key]
-                      const shifted =
+                      const adjusted =
                         entry !== undefined && entry.adjustedTime !== item.time
                       const conflict = entry?.conflict ?? null
                       const partnerName =
@@ -232,7 +237,7 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
                           dosage={item.supplement.dosage}
                           status={item.status}
                           takenAt={item.log?.takenAt}
-                          earliestTime={shifted ? entry.adjustedTime : undefined}
+                          adjustedTime={adjusted ? entry.adjustedTime : undefined}
                           conflict={conflict}
                           partnerName={partnerName}
                           readOnly={!isToday}
@@ -278,8 +283,8 @@ type DoseCardProps = {
   dosage: string
   status: DoseStatus
   takenAt?: string
-  /** The time a shifted pending dose may be taken at the earliest. */
-  earliestTime?: string
+  /** The adjusted time an adjusted pending dose may be taken at the earliest. */
+  adjustedTime?: string
   conflict?: SpacingConflict | null
   /** The name of the supplement on the other side of the rule. */
   partnerName?: string
@@ -291,13 +296,6 @@ type DoseCardProps = {
   onUndo: () => void
 }
 
-/** "4 hours" for a 240-minute rule, "1.5 hours" for a 90-minute one. */
-function intervalLabel(minutes: number): string {
-  const hours = minutes / 60
-  const amount = Number.isInteger(hours) ? String(hours) : hours.toFixed(1)
-  return `${amount} ${hours === 1 ? "hour" : "hours"}`
-}
-
 function DoseCard({
   name,
   brand,
@@ -305,7 +303,7 @@ function DoseCard({
   dosage,
   status,
   takenAt,
-  earliestTime,
+  adjustedTime,
   conflict = null,
   partnerName = "",
   readOnly,
@@ -350,17 +348,17 @@ function DoseCard({
         </div>
       </div>
 
-      {earliestTime && (
+      {adjustedTime && (
         <p className="mt-3 text-xs font-medium text-primary">
-          Earliest at {formatTime(earliestTime)}
+          Earliest at {formatTime(adjustedTime)}
         </p>
       )}
 
       {conflictMessage !== null && (
         <p role="alert" className="mt-3 text-xs font-medium text-destructive">
           {conflictMessage}
-          {conflict?.earliestTime
-            ? ` Earliest safe time ${formatTime(conflict.earliestTime)}.`
+          {conflict?.earliestSafeTime
+            ? ` Earliest safe time ${formatTime(conflict.earliestSafeTime)}.`
             : ""}
         </p>
       )}

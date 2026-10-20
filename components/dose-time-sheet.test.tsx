@@ -73,6 +73,36 @@ function stateWithRule(timeFormat: "12h" | "24h"): AppState {
   }
 }
 
+/**
+ * The same state, with the partner taken late enough that the gap's earliest
+ * safe time falls outside the Logical Day.
+ */
+function stateWithLatePartner(timeFormat: "12h" | "24h"): AppState {
+  return {
+    supplements: [copper, zinc],
+    doseLogs: [
+      {
+        id: "log-1",
+        supplementId: "zinc",
+        date: "2026-05-04",
+        time: "12:00",
+        status: "taken",
+        takenAt: "01:00",
+      },
+    ],
+    wellnessLogs: [],
+    spacingRules: [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ],
+    settings: { timeFormat },
+  }
+}
+
 function renderSheet(
   overrides: Partial<SheetProps> = {},
   timeFormat: "12h" | "24h" = "12h",
@@ -200,6 +230,24 @@ describe("DoseTimeSheet", () => {
     expect(alert).toMatch(/earliest safe time/i)
     expect(alert).toMatch(/01:00 PM/)
     expect(alert).toMatch(/Zinc/)
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it("says there is no safe time left when the day has none", () => {
+    vi.useFakeTimers()
+    // 02:00 on the physical date belongs to the Logical Day that started on
+    // the day before, so the sheet is still on that Logical Day.
+    vi.setSystemTime(new Date(2026, 4, 5, 2, 0))
+
+    const { onSave } = renderSheet({}, "12h", stateWithLatePartner("12h"))
+
+    fireEvent.change(screen.getByLabelText("Actual time"), {
+      target: { value: "02:00" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    const alert = screen.getByRole("alert").textContent ?? ""
+    expect(alert).toMatch(/no safe time is left in this day/i)
     expect(onSave).not.toHaveBeenCalled()
   })
 

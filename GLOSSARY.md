@@ -83,7 +83,7 @@ A standing minimum interval between two Supplements, measured in whole hours. It
 _Avoid_: gap rule, spacing, interval rule, cooldown
 
 **Spacing Adjustment**:
-The later time a pending Scheduled Dose may be taken, when a linked dose was taken later than the Spacing Rule allows. It belongs to one Logical Day and never changes the base Schedule.
+The later time a pending Scheduled Dose may be taken, when its own slot falls inside the forbidden window around a linked dose's Actual Intake Time. It belongs to one Logical Day and never changes the base Schedule.
 _Avoid_: reschedule, override, delay, shift
 
 **Spacing Conflict**:

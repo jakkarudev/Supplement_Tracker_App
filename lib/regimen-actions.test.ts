@@ -164,6 +164,12 @@ describe("spacing rule writes", () => {
 })
 
 describe("logDose", () => {
+  it("owns only the supplements and the dose logs", () => {
+    const next = logDose(makeState({ spacingRules: [RULE] }), logInput("taken"))
+
+    expect(Object.keys(next).sort()).toEqual(["doseLogs", "supplements"])
+  })
+
   it("records a taken dose and consumes the dosage amount", () => {
     const next = logDose(makeState(), logInput("taken"))
 
@@ -266,7 +272,10 @@ describe("logDose", () => {
     const state = makeState()
     const next = logDose(state, logInput("pending"))
 
-    expect(next).toEqual(state)
+    expect(next).toEqual({
+      supplements: state.supplements,
+      doseLogs: state.doseLogs,
+    })
   })
 
   it("consumes fractional dosage amounts", () => {
@@ -279,7 +288,10 @@ describe("logDose", () => {
   })
 
   it("restores the amount recorded when taken, not the current dosage", () => {
-    const taken = logDose(makeState(), logInput("taken"))
+    // The dose log write model owns the supplements and the dose logs, so the
+    // state is spread the way the reducer spreads it.
+    const state = makeState()
+    const taken = { ...state, ...logDose(state, logInput("taken")) }
     const edited = updateSupplement(taken, makeSupplement({ dosage: "1 capsule", currentCount: 8 }))
 
     const snoozed = logDose(edited, logInput("snoozed"))

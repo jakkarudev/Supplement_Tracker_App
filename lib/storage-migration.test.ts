@@ -1475,6 +1475,50 @@ describe("spacing rule validation", () => {
     },
   )
 
+  it.each([90, 150, 30])(
+    "drops a rule whose interval of %s minutes is not a whole number of hours and counts it",
+    (minimumIntervalMinutes) => {
+      const result = migrateWithRules([
+        {
+          id: "rule-1",
+          supplementAId: "copper",
+          supplementBId: "zinc",
+          minimumIntervalMinutes,
+        },
+      ])
+
+      expect(result.state.spacingRules).toEqual([])
+      expect(result.dropped.spacingRules).toBe(1)
+    },
+  )
+
+  it("drops a second rule for the same pair and counts it", () => {
+    const result = migrateWithRules([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+      {
+        id: "rule-2",
+        supplementAId: "zinc",
+        supplementBId: "copper",
+        minimumIntervalMinutes: 360,
+      },
+    ])
+
+    expect(result.state.spacingRules).toEqual([
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ])
+    expect(result.dropped.spacingRules).toBe(1)
+  })
+
   it("drops a rule naming a supplement that does not exist and counts it", () => {
     const result = migrateWithRules([
       {
