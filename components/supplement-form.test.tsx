@@ -10,7 +10,12 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/app-context", () => ({
-  useAppState: () => ({ supplements: mocks.supplements, doseLogs: [], wellnessLogs: [] }),
+  useAppState: () => ({
+    supplements: mocks.supplements,
+    doseLogs: [],
+    wellnessLogs: [],
+    settings: { timeFormat: "12h" },
+  }),
   useAppDispatch: () => mocks.dispatch,
   nanoid: () => "new-id",
 }))

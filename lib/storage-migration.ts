@@ -6,12 +6,13 @@ import {
   type SupplementForm,
   type WellnessLog,
 } from "./supplements-data"
-import type { AppState } from "./app-state"
+import type { AppState, Settings } from "./app-state"
+import { DEFAULT_SETTINGS } from "./app-state"
 import { isCalendarDate, normalizeTimeList, normalizeTimeOfDay } from "./day-regimen"
 
 type StoredPayload = Record<string, unknown>
 
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 3
 
 const LEGACY_STARTED_ON = "1970-01-01"
 const DOSE_STATUSES: readonly DoseStatus[] = ["taken", "pending", "snoozed"]
@@ -53,7 +54,13 @@ export type CollectionRecordCounts = {
 export type DroppedRecordCounts = CollectionRecordCounts
 
 /** How many records of each collection validation repaired. */
-export type RepairedRecordCounts = CollectionRecordCounts
+export type RepairedRecordCounts = CollectionRecordCounts & {
+  /**
+   * How many times the display settings were repaired. Settings are not a
+   * collection, so they are counted apart from the record counts.
+   */
+  settings: number
+}
 
 /** The total number of records counted across every collection. */
 function totalRecords(counts: CollectionRecordCounts): number {
@@ -70,14 +77,14 @@ export function hasDroppedRecords(dropped: DroppedRecordCounts): boolean {
   return totalRecords(dropped) > 0
 }
 
-/** The total number of records repaired across every collection. */
+/** The total number of records repaired, including the display settings. */
 export function totalRepairedRecords(repaired: RepairedRecordCounts): number {
-  return totalRecords(repaired)
+  return totalRecords(repaired) + repaired.settings
 }
 
-/** True when normalization repaired at least one record. */
+/** True when normalization repaired at least one record or the settings. */
 export function hasRepairedRecords(repaired: RepairedRecordCounts): boolean {
-  return totalRecords(repaired) > 0
+  return totalRepairedRecords(repaired) > 0
 }
 
 export type StoredAppStateMigration =
@@ -325,6 +332,27 @@ function normalizeRecords<T>(
 }
 
 /**
+ * The stored display settings. A missing or invalid time format is repaired
+ * to the default, because a preference the app cannot read is a preference
+ * the user never chose.
+ */
+function normalizeSettings(value: unknown): {
+  settings: Settings
+  repaired: boolean
+} {
+  if (!isRecord(value)) {
+    return { settings: { ...DEFAULT_SETTINGS }, repaired: true }
+  }
+
+  const timeFormat = value.timeFormat
+  if (timeFormat === "12h" || timeFormat === "24h") {
+    return { settings: { timeFormat }, repaired: false }
+  }
+
+  return { settings: { ...DEFAULT_SETTINGS }, repaired: true }
+}
+
+/**
  * The stored dose logs. Current storage writes `doseLogs`; legacy state wrote
  * `intakeLogs`, and the current key wins when both exist. Neither key holding
  * an array means there are no logs to read.
@@ -347,12 +375,14 @@ function normalizeStoredState(payload: StoredPayload): {
   const supplements = normalizeRecords(rawSupplements, normalizeSupplement)
   const doseLogs = normalizeRecords(rawDoseLogs, normalizeDoseLog)
   const wellnessLogs = normalizeWellnessLogs(payload.wellnessLogs)
+  const settings = normalizeSettings(payload.settings)
 
   return {
     state: {
       supplements: supplements.records,
       doseLogs: doseLogs.records,
       wellnessLogs: wellnessLogs.records,
+      settings: settings.settings,
     },
     dropped: {
       supplements: supplements.dropped,
@@ -363,6 +393,7 @@ function normalizeStoredState(payload: StoredPayload): {
       supplements: supplements.repaired,
       doseLogs: doseLogs.repaired,
       wellnessLogs: wellnessLogs.repaired,
+      settings: settings.repaired ? 1 : 0,
     },
   }
 }
@@ -421,7 +452,26 @@ function migrateV1ToV2(payload: StoredPayload): StoredPayload {
   return { ...payload, schemaVersion: 2 }
 }
 
-const MIGRATION_STEPS: readonly MigrationStep[] = [migrateV0ToV1, migrateV1ToV2]
+/**
+ * Version 2 → 3 adds the `settings` display preferences with their defaults.
+ * An existing settings object is preserved untouched, so the always-on
+ * normalizer repairs an unreadable time format and counts the repair instead
+ * of this step hiding it.
+ */
+function migrateV2ToV3(payload: StoredPayload): StoredPayload {
+  return {
+    ...payload,
+    schemaVersion: 3,
+    settings:
+      payload.settings === undefined ? { ...DEFAULT_SETTINGS } : payload.settings,
+  }
+}
+
+const MIGRATION_STEPS: readonly MigrationStep[] = [
+  migrateV0ToV1,
+  migrateV1ToV2,
+  migrateV2ToV3,
+]
 
 function runMigrationSteps(payload: StoredPayload, fromVersion: number): StoredPayload {
   let migrated = payload

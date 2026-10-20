@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { DoseTimeSheet } from "./dose-time-sheet"
+import { AppStateContext } from "@/lib/app-context"
+import type { AppState } from "@/lib/app-state"
 
 vi.stubGlobal(
   "ResizeObserver",
@@ -16,21 +18,35 @@ window.HTMLElement.prototype.scrollIntoView = vi.fn()
 
 type SheetProps = React.ComponentProps<typeof DoseTimeSheet>
 
-function renderSheet(overrides: Partial<SheetProps> = {}) {
+function stateWith(timeFormat: "12h" | "24h"): AppState {
+  return {
+    supplements: [],
+    doseLogs: [],
+    wellnessLogs: [],
+    settings: { timeFormat },
+  }
+}
+
+function renderSheet(
+  overrides: Partial<SheetProps> = {},
+  timeFormat: "12h" | "24h" = "12h",
+) {
   const onSave = vi.fn()
   const onOpenChange = vi.fn()
 
   render(
-    <DoseTimeSheet
-      open
-      mode="log"
-      logicalDate="2026-05-04"
-      scheduledTime="08:00"
-      initialTime="10:12"
-      onOpenChange={onOpenChange}
-      onSave={onSave}
-      {...overrides}
-    />,
+    <AppStateContext.Provider value={stateWith(timeFormat)}>
+      <DoseTimeSheet
+        open
+        mode="log"
+        logicalDate="2026-05-04"
+        scheduledTime="08:00"
+        initialTime="10:12"
+        onOpenChange={onOpenChange}
+        onSave={onSave}
+        {...overrides}
+      />
+    </AppStateContext.Provider>,
   )
 
   return { onSave, onOpenChange }
@@ -49,6 +65,13 @@ describe("DoseTimeSheet", () => {
       "10:12",
     )
     expect(screen.getByText(/Scheduled for 08:00 AM/)).toBeTruthy()
+  })
+
+  it("shows the scheduled slot in 24-hour form when the preference says so", () => {
+    renderSheet({}, "24h")
+
+    expect(screen.getByText(/Scheduled for 08:00\./)).toBeTruthy()
+    expect(screen.queryByText(/Scheduled for 08:00 AM/)).toBeNull()
   })
 
   it("uses a different title when correcting an existing time", () => {
