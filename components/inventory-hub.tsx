@@ -14,7 +14,11 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useAppDispatch, useInventory } from "@/lib/app-context"
 import { inventoryUnitLabel } from "@/lib/dosage"
-import type { InventoryRow } from "@/lib/inventory"
+import {
+  describeInventoryForecast,
+  type InventoryForecast,
+  type InventoryRowWithForecast,
+} from "@/lib/inventory-forecast"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useEffect, useState } from "react"
@@ -46,7 +50,7 @@ type Props = {
   onEdit?: (id: string) => void
 }
 
-const GROUPS: { state: InventoryRow["courseState"]; label: string }[] = [
+const GROUPS: { state: InventoryRowWithForecast["courseState"]; label: string }[] = [
   { state: "current", label: "Current" },
   { state: "upcoming", label: "Upcoming" },
   { state: "finished", label: "Finished" },
@@ -95,12 +99,12 @@ function InventoryItem({
   row,
   onEdit,
 }: {
-  row: InventoryRow
+  row: InventoryRowWithForecast
   onEdit?: (id: string) => void
 }) {
   const dispatch = useAppDispatch()
   const isMobile = useIsMobile()
-  const { supplement, courseState, percent, lowStock, overdrawn } = row
+  const { supplement, courseState, percent, lowStock, overdrawn, forecast } = row
   const needsAttention = lowStock || overdrawn
   const unit = inventoryUnitLabel(supplement.form, supplement.totalCount)
 
@@ -240,6 +244,8 @@ function InventoryItem({
               {supplement.currentCount} / {supplement.totalCount} {unit}
             </span>
           </div>
+
+          {forecast && <ForecastLine forecast={forecast} />}
         </div>
       </div>
 
@@ -264,6 +270,17 @@ function InventoryItem({
         </div>
       )}
     </div>
+  )
+}
+
+function ForecastLine({ forecast }: { forecast: InventoryForecast }) {
+  const { headline, secondary } = describeInventoryForecast(forecast)
+
+  return (
+    <p className="mt-2 text-xs text-muted-foreground">
+      <span className="font-semibold text-foreground">{headline}</span>
+      {secondary && <span> · {secondary}</span>}
+    </p>
   )
 }
 
