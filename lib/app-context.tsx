@@ -12,6 +12,7 @@ import {
 } from "react"
 import { toast } from "sonner"
 import {
+  type SpacingRule,
   type Supplement,
   type WellnessLog,
 } from "@/lib/supplements-data"
@@ -23,9 +24,12 @@ import {
   type ReminderPlanInput,
 } from "@/lib/reminders"
 import {
+  addSpacingRule,
   addSupplement,
+  deleteSpacingRule,
   deleteSupplement,
   logDose,
+  updateSpacingRule,
   updateSupplement,
   type LogDoseInput,
 } from "@/lib/regimen-actions"
@@ -65,6 +69,9 @@ export type Action =
   | { type: "ADD_SUPPLEMENT"; payload: Supplement }
   | { type: "UPDATE_SUPPLEMENT"; payload: Supplement }
   | { type: "DELETE_SUPPLEMENT"; payload: string }
+  | { type: "ADD_SPACING_RULE"; payload: SpacingRule }
+  | { type: "UPDATE_SPACING_RULE"; payload: SpacingRule }
+  | { type: "DELETE_SPACING_RULE"; payload: string }
   | { type: "LOG_DOSE"; payload: LogDoseInput }
   | { type: "LOG_WELLNESS"; payload: WellnessLog }
   | { type: "SET_TIME_FORMAT"; payload: TimeFormat }
@@ -85,6 +92,15 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "DELETE_SUPPLEMENT":
       return { ...state, ...deleteSupplement(state, action.payload) }
+
+    case "ADD_SPACING_RULE":
+      return { ...state, ...addSpacingRule(state, action.payload) }
+
+    case "UPDATE_SPACING_RULE":
+      return { ...state, ...updateSpacingRule(state, action.payload) }
+
+    case "DELETE_SPACING_RULE":
+      return { ...state, ...deleteSpacingRule(state, action.payload) }
 
     case "LOG_DOSE":
       return { ...state, ...logDose(state, action.payload) }
@@ -119,6 +135,7 @@ const INITIAL_STATE: AppState = {
   supplements: [],
   doseLogs: [],
   wellnessLogs: [],
+  spacingRules: [],
   settings: { ...DEFAULT_SETTINGS },
 }
 
@@ -355,6 +372,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         syncRemindersFromState({
           supplements: latestState.supplements,
           doseLogs: latestState.doseLogs,
+          spacingRules: latestState.spacingRules,
         })
       }
     }
@@ -406,16 +424,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state, status])
 
-  // Re-plan when hydration completes and whenever the regimen or dose logs
-  // change. The sync only checks permission; asking for it belongs to a
-  // successful supplement save.
+  // Re-plan when hydration completes and whenever the regimen, the dose logs,
+  // or the spacing rules change. The sync only checks permission; asking for
+  // it belongs to a successful supplement save.
   useEffect(() => {
     if (status !== "ready" && status !== "recovered") return
     syncRemindersFromState({
       supplements: state.supplements,
       doseLogs: state.doseLogs,
+      spacingRules: state.spacingRules,
     })
-  }, [state.supplements, state.doseLogs, status, syncRemindersFromState])
+  }, [state.supplements, state.doseLogs, state.spacingRules, status, syncRemindersFromState])
 
   return (
     <StateCtx.Provider value={state}>

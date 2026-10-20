@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Boxes, Clock, Link, NotebookPen, Pill, Plus, Save, X } from "lucide-react"
+import { Boxes, Clock, Link, Link2, NotebookPen, Pill, Plus, Save, X } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils"
 import { useAppState, useAppDispatch, nanoid } from "@/lib/app-context"
 import { requestReminderPermission } from "@/lib/reminders"
 import { today } from "@/lib/day-regimen"
+import { minimumScheduledGap } from "@/lib/spacing"
 import {
   dosageUnitForForm,
   formatDosage,
@@ -40,7 +41,7 @@ import {
   parseDosageValueForForm,
   solidDosageOptionsFor,
 } from "@/lib/dosage"
-import { SUPPLEMENT_FORMS } from "@/lib/supplements-data"
+import { SUPPLEMENT_FORMS, type SpacingRule, type Supplement } from "@/lib/supplements-data"
 
 const WEEK = [
   { label: "Sun", value: 0 },
@@ -152,8 +153,217 @@ type Props = {
   onDone?: () => void
 }
 
+/** "4 hours" for a 240-minute rule, "1.5 hours" for a 90-minute one. */
+function hoursLabel(minutes: number): string {
+  const hours = minutes / 60
+  const amount = Number.isInteger(hours) ? String(hours) : hours.toFixed(1)
+  return `${amount} ${hours === 1 ? "hour" : "hours"}`
+}
+
+type SpacingSectionProps = {
+  /** The supplement being edited, or null while a new one is being written. */
+  supplement: Supplement | null
+  rules: SpacingRule[]
+  supplements: Supplement[]
+  onAdd: (rule: SpacingRule) => void
+  onUpdate: (rule: SpacingRule) => void
+  onRemove: (ruleId: string) => void
+}
+
+/**
+ * The spacing rules that involve one supplement. The supplement being edited
+ * is always one side of a new rule, so the partner is the only side the user
+ * picks.
+ */
+function SpacingSection({
+  supplement,
+  rules,
+  supplements,
+  onAdd,
+  onUpdate,
+  onRemove,
+}: SpacingSectionProps) {
+  const [partnerId, setPartnerId] = useState("")
+  const [hours, setHours] = useState("4")
+  const [warning, setWarning] = useState<string | null>(null)
+
+  const partners = supplements.filter((candidate) => candidate.id !== supplement?.id)
+  const involved =
+    supplement === null
+      ? []
+      : rules.filter(
+          (rule) =>
+            rule.supplementAId === supplement.id || rule.supplementBId === supplement.id,
+        )
+
+  function partnerNameOf(rule: SpacingRule): string {
+    const otherId =
+      rule.supplementAId === supplement?.id ? rule.supplementBId : rule.supplementAId
+    return (
+      supplements.find((candidate) => candidate.id === otherId)?.name ??
+      "another supplement"
+    )
+  }
+
+  function handleAdd() {
+    if (supplement === null || partnerId === "") return
+
+    const parsedHours = Number(hours)
+    if (!Number.isInteger(parsedHours) || parsedHours <= 0) return
+
+    const partner = supplements.find((candidate) => candidate.id === partnerId)
+    const rule: SpacingRule = {
+      id: nanoid(),
+      supplementAId: supplement.id,
+      supplementBId: partnerId,
+      minimumIntervalMinutes: parsedHours * 60,
+    }
+
+    onAdd(rule)
+
+    // The base Schedules may not leave room for the rule. Say so, and save
+    // the rule anyway: the user may be planning to move a time.
+    const gap =
+      partner === undefined
+        ? null
+        : minimumScheduledGap(supplement, partner, today())
+    setWarning(
+      gap !== null && gap < rule.minimumIntervalMinutes
+        ? `Their schedules are ${hoursLabel(gap)} apart, but the rule asks for ${hoursLabel(rule.minimumIntervalMinutes)}. The later dose will be held back whenever the first is taken late.`
+        : null,
+    )
+  }
+
+  return (
+    <SectionCard
+      icon={Link2}
+      title="Spacing"
+      description="Keep two linked supplements a minimum distance apart."
+    >
+      {supplement === null ? (
+        <p className="text-sm text-muted-foreground">
+          Save this supplement first to link it to another one.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {involved.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No linked supplements yet.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {involved.map((rule) => {
+                const partnerName = partnerNameOf(rule)
+                return (
+                  <li
+                    key={rule.id}
+                    className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card/50 p-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{partnerName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Minimum {hoursLabel(rule.minimumIntervalMinutes)} apart
+                      </p>
+                    </div>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      defaultValue={rule.minimumIntervalMinutes / 60}
+                      key={`${rule.id}-${rule.minimumIntervalMinutes}`}
+                      aria-label={`Minimum hours apart from ${partnerName}`}
+                      onChange={(event) => {
+                        const value = Number(event.target.value)
+                        if (!Number.isInteger(value) || value <= 0) return
+                        onUpdate({
+                          ...rule,
+                          minimumIntervalMinutes: value * 60,
+                        })
+                      }}
+                      className="h-9 w-20 text-center"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onRemove(rule.id)}
+                      aria-label={`Remove spacing rule with ${partnerName}`}
+                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-destructive"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          <div className="space-y-3 rounded-2xl border border-border bg-card/50 p-3">
+            <div className="space-y-2">
+              <Label htmlFor="spacing-partner">Partner supplement</Label>
+              <Select
+                value={partnerId}
+                onValueChange={(value) => {
+                  if (value === "") return
+                  setPartnerId(value)
+                  setWarning(null)
+                }}
+              >
+                <SelectTrigger id="spacing-partner" className="w-full">
+                  <SelectValue placeholder="Choose a supplement" />
+                </SelectTrigger>
+                <SelectContent>
+                  {partners.map((partner) => (
+                    <SelectItem key={partner.id} value={partner.id}>
+                      {partner.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Label htmlFor="spacing-hours" className="text-sm text-muted-foreground">
+                Minimum
+              </Label>
+              <Input
+                id="spacing-hours"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                aria-label="Minimum hours"
+                value={hours}
+                onChange={(event) => setHours(event.target.value)}
+                className="h-9 w-20 text-center"
+              />
+              <span className="text-sm text-muted-foreground">hours apart</span>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAdd}
+              disabled={partnerId === ""}
+              className="rounded-xl"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add rule
+            </Button>
+          </div>
+
+          {warning !== null && (
+            <p role="alert" className="text-sm text-destructive">
+              {warning}
+            </p>
+          )}
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
 export function SupplementForm({ editingId, onDone }: Props) {
-  const { supplements } = useAppState()
+  const { supplements, spacingRules } = useAppState()
   const dispatch = useAppDispatch()
   const editing = supplements.find((s) => s.id === editingId) ?? null
 
@@ -782,6 +992,16 @@ export function SupplementForm({ editingId, onDone }: Props) {
             />
           </div>
         </SectionCard>
+
+        <SpacingSection
+          key={editing?.id ?? "new-supplement"}
+          supplement={editing}
+          rules={spacingRules}
+          supplements={supplements}
+          onAdd={(rule) => dispatch({ type: "ADD_SPACING_RULE", payload: rule })}
+          onUpdate={(rule) => dispatch({ type: "UPDATE_SPACING_RULE", payload: rule })}
+          onRemove={(ruleId) => dispatch({ type: "DELETE_SPACING_RULE", payload: ruleId })}
+        />
 
         <div className="glass-strong sticky bottom-[calc(5.75rem+env(safe-area-inset-bottom,0px))] z-20 -mx-3 grid gap-2 rounded-2xl p-3 backdrop-blur-sm sm:static sm:mx-0 sm:flex sm:justify-end sm:bg-transparent sm:p-0 sm:shadow-none">
           <Button type="submit" size="lg" className="w-full rounded-xl sm:w-auto">

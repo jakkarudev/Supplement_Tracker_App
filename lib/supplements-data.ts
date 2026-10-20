@@ -35,6 +35,17 @@ export type DoseLog = {
   inventoryAmount?: number // consumed when taken; recorded for exact reversal
 }
 
+/**
+ * A standing minimum interval between two Supplements. The rule is symmetric:
+ * it applies to both sides, and it always links two different Supplements.
+ */
+export type SpacingRule = {
+  id: string
+  supplementAId: string
+  supplementBId: string
+  minimumIntervalMinutes: number
+}
+
 export type WellnessLog = {
   date: string   // "YYYY-MM-DD"
   energy: number // 1–10

@@ -1,12 +1,13 @@
-import type { DoseLog, DoseStatus, Supplement } from "./supplements-data"
+import type { DoseLog, DoseStatus, SpacingRule, Supplement } from "./supplements-data"
 import { dosageInventoryAmount } from "./dosage"
 import { doseKey, normalizeTimeOfDay, type CalendarDate } from "./day-regimen"
 import { nanoid } from "./nanoid"
 
-/** The tracked state this module owns: supplements and their dose logs. */
+/** The tracked state this module owns: supplements, their dose logs, and their spacing rules. */
 export type RegimenState = {
   supplements: Supplement[]
   doseLogs: DoseLog[]
+  spacingRules: SpacingRule[]
 }
 
 /** A user's decision about one scheduled dose. */
@@ -39,7 +40,7 @@ export function updateSupplement(
   }
 }
 
-/** Removes a supplement and its entire dose history. */
+/** Removes a supplement, its entire dose history, and the rules that involve it. */
 export function deleteSupplement(
   state: RegimenState,
   supplementId: string,
@@ -47,6 +48,42 @@ export function deleteSupplement(
   return {
     supplements: state.supplements.filter((s) => s.id !== supplementId),
     doseLogs: state.doseLogs.filter((log) => log.supplementId !== supplementId),
+    spacingRules: state.spacingRules.filter(
+      (rule) =>
+        rule.supplementAId !== supplementId && rule.supplementBId !== supplementId,
+    ),
+  }
+}
+
+/** Appends a spacing rule. Rules are permanent; nothing else moves. */
+export function addSpacingRule(
+  state: RegimenState,
+  rule: SpacingRule,
+): RegimenState {
+  return { ...state, spacingRules: [...state.spacingRules, rule] }
+}
+
+/** Replaces a spacing rule by id. */
+export function updateSpacingRule(
+  state: RegimenState,
+  rule: SpacingRule,
+): RegimenState {
+  return {
+    ...state,
+    spacingRules: state.spacingRules.map((existing) =>
+      existing.id === rule.id ? rule : existing,
+    ),
+  }
+}
+
+/** Removes a spacing rule by id. */
+export function deleteSpacingRule(
+  state: RegimenState,
+  ruleId: string,
+): RegimenState {
+  return {
+    ...state,
+    spacingRules: state.spacingRules.filter((rule) => rule.id !== ruleId),
   }
 }
 
@@ -97,6 +134,7 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
       doseLogs: existing
         ? state.doseLogs.filter((_, logIndex) => logIndex !== index)
         : state.doseLogs,
+      spacingRules: state.spacingRules,
     }
   }
 
@@ -117,6 +155,7 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
       doseLogs: state.doseLogs.map((log, logIndex) =>
         logIndex === index ? nextLog : log,
       ),
+      spacingRules: state.spacingRules,
     }
   }
 
@@ -134,5 +173,5 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
     newLog = withTakenAt(newLog, input.takenAt)
   }
 
-  return { supplements, doseLogs: [...state.doseLogs, newLog] }
+  return { supplements, doseLogs: [...state.doseLogs, newLog], spacingRules: state.spacingRules }
 }

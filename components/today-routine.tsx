@@ -17,6 +17,7 @@ import {
   type Period,
   type ScheduledDose,
 } from "@/lib/day-regimen"
+import { buildSpacingPlan, type SpacingConflict } from "@/lib/spacing"
 import { cn } from "@/lib/utils"
 
 type TimeSheetState = {
@@ -38,7 +39,7 @@ type TodayRoutineProps = {
 }
 
 export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineProps) {
-  const { supplements, doseLogs } = useAppState()
+  const { supplements, doseLogs, spacingRules } = useAppState()
   const dispatch = useAppDispatch()
   const { formatTime } = useTimeFormat()
   const todayDate = today()
@@ -54,6 +55,13 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
     [supplements, doseLogs, selectedDate],
   )
   const doses = regimen.doses
+
+  // The spacing plan says when a dose may actually be taken, and which doses
+  // are part of a conflict the user needs to see.
+  const spacingPlan = useMemo(
+    () => buildSpacingPlan({ supplements, doseLogs, spacingRules }, selectedDate),
+    [supplements, doseLogs, spacingRules, selectedDate],
+  )
 
   const grouped = useMemo(() => {
     const groups = new Map<string, ScheduledDose[]>()
@@ -88,10 +96,15 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
   function openTimeSheet(item: ScheduledDose, mode: TimeSheetState["mode"]) {
     if (!isToday) return
 
+    const entry = spacingPlan[item.key]
+    const shifted = entry !== undefined && entry.adjustedTime !== item.time
+
     const initialTime =
       mode === "correct" && item.log?.takenAt
         ? item.log.takenAt
-        : timeOfDayFrom(new Date())
+        : shifted
+          ? entry.adjustedTime
+          : timeOfDayFrom(new Date())
     setTimeSheet({ dose: item, mode, initialTime })
   }
 
@@ -198,23 +211,39 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
                     </div>
                   </div>
                   <div className="ml-3 space-y-3 border-l border-dashed border-border pl-4 sm:ml-[1.1rem] sm:pl-6">
-                    {items.map((item) => (
-                      <DoseCard
-                        key={item.key}
-                        name={item.supplement.name}
-                        brand={item.supplement.brand}
-                        potency={item.supplement.potency}
-                        dosage={item.supplement.dosage}
-                        status={item.status}
-                        takenAt={item.log?.takenAt}
-                        readOnly={!isToday}
-                        sliderResetKey={sliderResets[item.key] ?? 0}
-                        onConfirm={() => openTimeSheet(item, "log")}
-                        onSnooze={() => logDose(item, "snoozed")}
-                        onCorrectTime={() => openTimeSheet(item, "correct")}
-                        onUndo={() => logDose(item, "pending")}
-                      />
-                    ))}
+                    {items.map((item) => {
+                      const entry = spacingPlan[item.key]
+                      const shifted =
+                        entry !== undefined && entry.adjustedTime !== item.time
+                      const conflict = entry?.conflict ?? null
+                      const partnerName =
+                        conflict === null
+                          ? ""
+                          : (supplements.find(
+                              (candidate) => candidate.id === conflict.partnerSupplementId,
+                            )?.name ?? "the linked supplement")
+
+                      return (
+                        <DoseCard
+                          key={item.key}
+                          name={item.supplement.name}
+                          brand={item.supplement.brand}
+                          potency={item.supplement.potency}
+                          dosage={item.supplement.dosage}
+                          status={item.status}
+                          takenAt={item.log?.takenAt}
+                          earliestTime={shifted ? entry.adjustedTime : undefined}
+                          conflict={conflict}
+                          partnerName={partnerName}
+                          readOnly={!isToday}
+                          sliderResetKey={sliderResets[item.key] ?? 0}
+                          onConfirm={() => openTimeSheet(item, "log")}
+                          onSnooze={() => logDose(item, "snoozed")}
+                          onCorrectTime={() => openTimeSheet(item, "correct")}
+                          onUndo={() => logDose(item, "pending")}
+                        />
+                      )
+                    })}
                   </div>
                 </section>
               )
@@ -228,6 +257,7 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
           key={`${timeSheet.dose.key}|${timeSheet.mode}`}
           open
           mode={timeSheet.mode}
+          supplementId={timeSheet.dose.supplement.id}
           logicalDate={timeSheet.dose.date}
           scheduledTime={timeSheet.dose.time}
           initialTime={timeSheet.initialTime}
@@ -248,12 +278,24 @@ type DoseCardProps = {
   dosage: string
   status: DoseStatus
   takenAt?: string
+  /** The time a shifted pending dose may be taken at the earliest. */
+  earliestTime?: string
+  conflict?: SpacingConflict | null
+  /** The name of the supplement on the other side of the rule. */
+  partnerName?: string
   readOnly: boolean
   sliderResetKey: number
   onConfirm: () => void
   onSnooze: () => void
   onCorrectTime: () => void
   onUndo: () => void
+}
+
+/** "4 hours" for a 240-minute rule, "1.5 hours" for a 90-minute one. */
+function intervalLabel(minutes: number): string {
+  const hours = minutes / 60
+  const amount = Number.isInteger(hours) ? String(hours) : hours.toFixed(1)
+  return `${amount} ${hours === 1 ? "hour" : "hours"}`
 }
 
 function DoseCard({
@@ -263,6 +305,9 @@ function DoseCard({
   dosage,
   status,
   takenAt,
+  earliestTime,
+  conflict = null,
+  partnerName = "",
   readOnly,
   sliderResetKey,
   onConfirm,
@@ -271,6 +316,13 @@ function DoseCard({
   onUndo,
 }: DoseCardProps) {
   const { formatTime } = useTimeFormat()
+
+  const conflictMessage =
+    conflict === null
+      ? null
+      : conflict.kind === "gap-not-met"
+        ? `Spacing conflict — taken less than ${intervalLabel(conflict.minimumIntervalMinutes)} apart from ${partnerName}.`
+        : `Spacing conflict — no time is left in this day for the ${intervalLabel(conflict.minimumIntervalMinutes)} gap from ${partnerName}.`
 
   return (
     <div
@@ -297,6 +349,21 @@ function DoseCard({
           <p className="mt-1 text-xs font-medium text-foreground">{dosage}</p>
         </div>
       </div>
+
+      {earliestTime && (
+        <p className="mt-3 text-xs font-medium text-primary">
+          Earliest at {formatTime(earliestTime)}
+        </p>
+      )}
+
+      {conflictMessage !== null && (
+        <p role="alert" className="mt-3 text-xs font-medium text-destructive">
+          {conflictMessage}
+          {conflict?.earliestTime
+            ? ` Earliest safe time ${formatTime(conflict.earliestTime)}.`
+            : ""}
+        </p>
+      )}
 
       {status === "taken" && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
