@@ -45,7 +45,7 @@ describe("TimeFormatToggle", () => {
 
     expect(screen.getByText("12h")).toBeTruthy()
     expect(
-      screen.getByRole("button", { name: "Switch to 24-hour time" }),
+      screen.getByRole("button", { name: "Currently 12h. Switch to 24-hour time" }),
     ).toBeTruthy()
   })
 
@@ -53,7 +53,7 @@ describe("TimeFormatToggle", () => {
     renderToggle(stateWith("12h"))
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Switch to 24-hour time" }),
+      screen.getByRole("button", { name: "Currently 12h. Switch to 24-hour time" }),
     )
 
     expect(mocks.dispatch).toHaveBeenCalledWith({
@@ -68,7 +68,7 @@ describe("TimeFormatToggle", () => {
     expect(screen.getByText("24h")).toBeTruthy()
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Switch to 12-hour time" }),
+      screen.getByRole("button", { name: "Currently 24h. Switch to 12-hour time" }),
     )
 
     expect(mocks.dispatch).toHaveBeenCalledWith({

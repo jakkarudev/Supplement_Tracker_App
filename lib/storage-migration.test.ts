@@ -6,6 +6,7 @@ import {
   migrateStoredAppState,
   totalDroppedRecords,
   totalRepairedRecords,
+  totalRepairedSettings,
 } from "./storage-migration"
 
 const legacySupplement = {
@@ -230,6 +231,21 @@ describe("migrateStoredAppState", () => {
     )
 
     expect(result.migratedFrom).toBeNull()
+    expect(result.repaired).toEqual(NO_REPAIRS)
+    expect(result.state.settings).toEqual({ timeFormat: "24h" })
+  })
+
+  it("ignores unknown keys inside a stored settings object without counting them", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 3,
+        supplements: [],
+        doseLogs: [],
+        wellnessLogs: [],
+        settings: { timeFormat: "24h", theme: "dark" },
+      }),
+    )
+
     expect(result.repaired).toEqual(NO_REPAIRS)
     expect(result.state.settings).toEqual({ timeFormat: "24h" })
   })
@@ -1254,10 +1270,22 @@ describe("repaired-record helpers", () => {
     ).toBe(6)
   })
 
-  it("counts a repaired settings object in the total", () => {
+  it("keeps a repaired display setting out of the record total", () => {
     expect(
       totalRepairedRecords({
         supplements: 0,
+        doseLogs: 0,
+        wellnessLogs: 0,
+        settings: 1,
+      }),
+    ).toBe(0)
+  })
+
+  it("counts the repaired display settings on their own", () => {
+    expect(totalRepairedSettings(NO_REPAIRS)).toBe(0)
+    expect(
+      totalRepairedSettings({
+        supplements: 2,
         doseLogs: 0,
         wellnessLogs: 0,
         settings: 1,
@@ -1273,6 +1301,17 @@ describe("repaired-record helpers", () => {
         doseLogs: 1,
         wellnessLogs: 0,
         settings: 0,
+      }),
+    ).toBe(true)
+  })
+
+  it("detects a repaired display setting on its own", () => {
+    expect(
+      hasRepairedRecords({
+        supplements: 0,
+        doseLogs: 0,
+        wellnessLogs: 0,
+        settings: 1,
       }),
     ).toBe(true)
   })

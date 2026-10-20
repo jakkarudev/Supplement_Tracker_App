@@ -6,15 +6,17 @@ import { useAppDispatch, useTimeFormat } from "@/lib/app-context"
 /**
  * The header control that switches the whole app between 12-hour and 24-hour
  * time. It shows the format in use and names the action it takes, so the
- * button says what it will do rather than only what it currently is.
+ * button says what it will do rather than only what it currently is. The
+ * accessible name carries the visible text too, so a screen reader says which
+ * format is active.
  */
 export function TimeFormatToggle() {
   const { timeFormat } = useTimeFormat()
   const dispatch = useAppDispatch()
 
   const nextFormat = timeFormat === "12h" ? "24h" : "12h"
-  const label =
-    nextFormat === "24h" ? "Switch to 24-hour time" : "Switch to 12-hour time"
+  const nextFormatName = nextFormat === "24h" ? "24-hour" : "12-hour"
+  const label = `Currently ${timeFormat}. Switch to ${nextFormatName} time`
 
   return (
     <button

@@ -77,14 +77,25 @@ export function hasDroppedRecords(dropped: DroppedRecordCounts): boolean {
   return totalRecords(dropped) > 0
 }
 
-/** The total number of records repaired, including the display settings. */
+/** The total number of records repaired across every collection. */
 export function totalRepairedRecords(repaired: RepairedRecordCounts): number {
-  return totalRecords(repaired) + repaired.settings
+  return totalRecords(repaired)
 }
 
-/** True when normalization repaired at least one record or the settings. */
+/**
+ * The number of times the display settings were repaired. Settings are not a
+ * collection, so they are counted apart from the record repairs.
+ */
+export function totalRepairedSettings(repaired: RepairedRecordCounts): number {
+  return repaired.settings
+}
+
+/**
+ * True when normalization repaired anything: a record in one of the
+ * collections, or the display settings.
+ */
 export function hasRepairedRecords(repaired: RepairedRecordCounts): boolean {
-  return totalRepairedRecords(repaired) > 0
+  return totalRepairedRecords(repaired) > 0 || totalRepairedSettings(repaired) > 0
 }
 
 export type StoredAppStateMigration =
