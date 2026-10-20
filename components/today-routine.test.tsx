@@ -8,6 +8,7 @@ import {
   screen,
 } from "@testing-library/react"
 import { TodayRoutine } from "./today-routine"
+import { AppStateContext } from "@/lib/app-context"
 import type { AppState } from "@/lib/app-state"
 import type { DoseLog, Supplement } from "@/lib/supplements-data"
 
@@ -16,12 +17,13 @@ const mocks = vi.hoisted(() => ({
     supplements: [],
     doseLogs: [],
     wellnessLogs: [],
+    settings: { timeFormat: "12h" },
   } as AppState,
   dispatch: vi.fn(),
 }))
 
-vi.mock("@/lib/app-context", () => ({
-  useAppState: () => mocks.state,
+vi.mock("@/lib/app-context", async (importOriginal) => ({
+  ...(await importOriginal()),
   useAppDispatch: () => mocks.dispatch,
 }))
 
@@ -71,7 +73,11 @@ function takenLog(overrides: Partial<DoseLog> = {}): DoseLog {
 }
 
 function renderRoutine(date = DATE) {
-  render(<TodayRoutine date={date} onSelectDate={vi.fn()} />)
+  render(
+    <AppStateContext.Provider value={mocks.state}>
+      <TodayRoutine date={date} onSelectDate={vi.fn()} />
+    </AppStateContext.Provider>,
+  )
 }
 
 function slideToConfirm() {
@@ -89,6 +95,7 @@ beforeEach(() => {
     supplements: [supplement],
     doseLogs: [takenLog({ takenAt: "10:12" })],
     wellnessLogs: [],
+    settings: { timeFormat: "12h" },
   }
   vi.useFakeTimers()
   vi.setSystemTime(new Date(2026, 4, 4, 10, 30))
@@ -105,6 +112,21 @@ describe("TodayRoutine actual intake time", () => {
 
     expect(screen.getByText("Taken at 10:12 AM")).toBeTruthy()
     expect(screen.getByText("08:00 AM")).toBeTruthy()
+  })
+
+  it("shows every time in 24-hour form when the preference says so", () => {
+    mocks.state = {
+      ...mocks.state,
+      settings: { timeFormat: "24h" },
+    }
+
+    renderRoutine()
+
+    expect(screen.getByText("Taken at 10:12")).toBeTruthy()
+    expect(screen.getByText("08:00")).toBeTruthy()
+    expect(
+      screen.getByRole("button", { name: "Taken at 10:12" }),
+    ).toBeTruthy()
   })
 
   it("shows no invented actual time for a legacy taken log", () => {

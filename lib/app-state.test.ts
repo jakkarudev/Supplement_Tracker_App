@@ -1,16 +1,24 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, expectTypeOf, it } from "vitest"
-import type { AppState } from "./app-state"
+import type { AppState, Settings } from "./app-state"
 import type { AppState as ProviderAppState } from "./app-context"
+import type { TimeFormat } from "./day-regimen"
 import type { DoseLog, Supplement, WellnessLog } from "./supplements-data"
 import { migrateStoredAppState } from "./storage-migration"
 
 describe("AppState", () => {
-  it("describes the three persisted collections", () => {
+  it("describes the three persisted collections and the display settings", () => {
     expectTypeOf<AppState>().toEqualTypeOf<{
       supplements: Supplement[]
       doseLogs: DoseLog[]
       wellnessLogs: WellnessLog[]
+      settings: Settings
+    }>()
+  })
+
+  it("describes the settings as a time format", () => {
+    expectTypeOf<Settings>().toEqualTypeOf<{
+      timeFormat: TimeFormat
     }>()
   })
 
@@ -20,10 +28,11 @@ describe("AppState", () => {
 
   it("is the shape storage migration returns", () => {
     const result = migrateStoredAppState({
-      schemaVersion: 2,
+      schemaVersion: 3,
       supplements: [],
       doseLogs: [],
       wellnessLogs: [],
+      settings: { timeFormat: "12h" },
     })
 
     expect(result.status).toBe("ok")
@@ -35,6 +44,7 @@ describe("AppState", () => {
       supplements: [],
       doseLogs: [],
       wellnessLogs: [],
+      settings: { timeFormat: "12h" },
     })
   })
 })

@@ -1,4 +1,5 @@
 import type { AppState } from "./app-state"
+import { DEFAULT_SETTINGS } from "./app-state"
 import {
   CURRENT_SCHEMA_VERSION,
   detectSchemaVersion,
@@ -94,18 +95,24 @@ function serializeState(state: AppState): string {
     supplements: state.supplements,
     doseLogs: state.doseLogs,
     wellnessLogs: state.wellnessLogs,
+    settings: state.settings,
   })
 }
 
 function emptyState(): AppState {
-  return { supplements: [], doseLogs: [], wellnessLogs: [] }
+  return {
+    supplements: [],
+    doseLogs: [],
+    wellnessLogs: [],
+    settings: { ...DEFAULT_SETTINGS },
+  }
 }
 
 /** Zero drop and repair counts, for a load with nothing to report per collection. */
 function noCounts(): RecoveryCounts {
   return {
     dropped: { supplements: 0, doseLogs: 0, wellnessLogs: 0 },
-    repaired: { supplements: 0, doseLogs: 0, wellnessLogs: 0 },
+    repaired: { supplements: 0, doseLogs: 0, wellnessLogs: 0, settings: 0 },
   }
 }
 
