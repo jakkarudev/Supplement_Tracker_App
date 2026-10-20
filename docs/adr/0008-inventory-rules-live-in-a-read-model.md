@@ -2,6 +2,10 @@
 
 **Status**: Accepted
 
+## Superseded in part by ADR 0011
+
+Days of Inventory and the Run-out Date now live in `lib/inventory-forecast.ts`, a separate read projection joined per row because it needs dose logs as well as the date. The rest of this decision stands: course state, ratio, low stock, overdrawn, and the summary counts remain in `lib/inventory.ts`.
+
 Inventory was recomputed in `InventoryHub`, `useAdherenceStats`, and `BiomarkerDashboard`, and "active bottles" counted finished and upcoming courses. `buildInventory(supplements, date)` in `lib/inventory.ts` now returns rows and a summary: course state (current, upcoming, or finished from the course window), ratio (`null` when the bottle size is unknown), clamped display percent, low stock, and overdrawn. Views render the rows and counts unchanged.
 
 Low stock is an alert for a current course only, and it remains an opt-in through restock tracking. The threshold is in inventory units (capsules, tablets, ml, g), not doses or days, so existing stored thresholds keep their meaning. Overdrawn is reported for every course because it is a data state, not an alert. Weekdays and cycle breaks do not change course state; they only decide whether a dose is scheduled.

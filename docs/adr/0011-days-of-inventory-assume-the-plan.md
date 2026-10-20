@@ -13,6 +13,6 @@ The Inventory view shows how long the stock lasts and when it runs out. The reco
 ## Consequences
 
 - Taking a scheduled dose leaves the figure unchanged; only a restock, a count edit, a schedule or dosage edit, or the stock falling short of a day's plan moves it. That is deliberate, not stale data.
-- The projection needs dose logs as well as the supplement and a Logical Day, so the stock read model keeps its date-only input and the Inventory view joins the forecast per row.
+- The projection needs dose logs as well as the supplement and a Logical Day, so the stock read model keeps its date-only input and the Inventory view's read hook (`useInventory`) joins it in `lib/app-context.tsx`.
 - A supplement with no Scheduled Doses has no figure and shows "No upcoming doses".
 - The projection bounds itself, because a plan that consumes nothing must not spin; ten years is far beyond any real bottle.
