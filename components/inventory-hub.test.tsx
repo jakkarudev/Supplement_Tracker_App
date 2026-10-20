@@ -96,10 +96,9 @@ afterEach(cleanup)
 describe("InventoryHub forecast copy", () => {
   it("shows the days of inventory and the run-out date on a current row", () => {
     mocks.inventory = inventoryWith("current", {
-      status: "ok",
+      status: "projected",
       days: 60,
       runOutDate: "2026-07-03",
-      courseEndsFirst: false,
       courseEndDate: null,
     })
 
@@ -111,10 +110,9 @@ describe("InventoryHub forecast copy", () => {
 
   it("shows the course end beside the run-out date when the course ends first", () => {
     mocks.inventory = inventoryWith("current", {
-      status: "ok",
+      status: "projected",
       days: 60,
       runOutDate: "2026-07-03",
-      courseEndsFirst: true,
       courseEndDate: "2026-06-02",
     })
 
@@ -128,7 +126,12 @@ describe("InventoryHub forecast copy", () => {
     [
       { status: "less-than-a-day", days: 0, runOutDate: "2026-05-04" } as const,
       "Less than a day of inventory",
-      "Runs out today",
+      "Runs out May 4",
+    ],
+    [
+      { status: "beyond-horizon", days: 3650, courseEndDate: null } as const,
+      "10+ years of inventory",
+      null,
     ],
     [{ status: "out-of-stock" } as const, "Out of stock", null],
     [{ status: "no-upcoming-doses" } as const, "No upcoming doses", null],

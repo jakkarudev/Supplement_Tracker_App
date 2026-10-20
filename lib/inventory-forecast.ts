@@ -3,6 +3,7 @@ import {
   doseKey,
   formatCalendarDate,
   scheduledDoses,
+  upcomingScheduledDoses,
   type CalendarDate,
 } from "./day-regimen"
 import { dosageInventoryAmount } from "./dosage"
@@ -16,16 +17,20 @@ import type { DoseLog, Supplement } from "./supplements-data"
 /** How long a supplement's Inventory lasts against its remaining plan. */
 export type InventoryForecast =
   | {
-      status: "ok"
+      status: "projected"
       days: number
       runOutDate: CalendarDate
-      courseEndsFirst: boolean
       courseEndDate: CalendarDate | null
     }
   | {
       status: "less-than-a-day"
       days: 0
       runOutDate: CalendarDate
+    }
+  | {
+      status: "beyond-horizon"
+      days: number
+      courseEndDate: CalendarDate | null
     }
   | { status: "out-of-stock" }
   | { status: "no-upcoming-doses" }
@@ -46,7 +51,9 @@ export type InventoryForecastDescription = {
   secondary: string | null
 }
 
-const MAX_FORECAST_DAYS = 3650
+/** Ten years, far beyond any real bottle. */
+const HORIZON_YEARS = 10
+const MAX_FORECAST_DAYS = HORIZON_YEARS * 365
 const EPSILON = 1e-9
 
 /** Projects a limited course past its end at the same weekday and cycle pattern. */
@@ -68,22 +75,16 @@ function takenDoseKeys(supplementId: string, doseLogs: DoseLog[]): Set<string> {
   return taken
 }
 
-/** Whether one full weekday and cycle pattern produces any Scheduled Dose. */
+/** Whether one full weekday and cycle pattern, capped at the horizon, produces any Scheduled Dose. */
 function hasUpcomingDoses(supplement: Supplement, fromDate: CalendarDate): boolean {
   const projected = openEnded(supplement)
   const cycleLength =
     supplement.cycleActiveDays && supplement.cycleBreakDays
       ? supplement.cycleActiveDays + supplement.cycleBreakDays
       : 1
-  const patternDays = 7 * cycleLength
+  const patternDays = Math.min(7 * cycleLength, MAX_FORECAST_DAYS)
 
-  for (let offset = 0; offset < patternDays; offset++) {
-    if (scheduledDoses([projected], addDays(fromDate, offset)).length > 0) {
-      return true
-    }
-  }
-
-  return false
+  return upcomingScheduledDoses([projected], fromDate, patternDays).length > 0
 }
 
 /**
@@ -95,10 +96,10 @@ export function forecastInventory(
   doseLogs: DoseLog[],
   fromDate: CalendarDate,
 ): InventoryForecast {
-  if (supplement.currentCount <= 0) return { status: "out-of-stock" }
   if (!hasUpcomingDoses(supplement, fromDate)) {
     return { status: "no-upcoming-doses" }
   }
+  if (supplement.currentCount <= 0) return { status: "out-of-stock" }
 
   const projected = openEnded(supplement)
   const amountPerDose = dosageInventoryAmount(supplement.dosage)
@@ -123,10 +124,9 @@ export function forecastInventory(
       }
 
       return {
-        status: "ok",
+        status: "projected",
         days: offset,
         runOutDate: date,
-        courseEndsFirst: courseEndDate !== null && courseEndDate < date,
         courseEndDate,
       }
     }
@@ -135,12 +135,9 @@ export function forecastInventory(
     if (remaining < 0 && remaining > -EPSILON) remaining = 0
   }
 
-  const runOutDate = addDays(fromDate, MAX_FORECAST_DAYS)
   return {
-    status: "ok",
+    status: "beyond-horizon",
     days: MAX_FORECAST_DAYS,
-    runOutDate,
-    courseEndsFirst: courseEndDate !== null && courseEndDate < runOutDate,
     courseEndDate,
   }
 }
@@ -168,22 +165,32 @@ export function describeInventoryForecast(
   forecast: InventoryForecast,
 ): InventoryForecastDescription {
   switch (forecast.status) {
-    case "ok": {
+    case "projected": {
       const days = forecast.days === 1 ? "1 day" : `${forecast.days} days`
       const runOut = `Runs out ${formatCalendarDate(forecast.runOutDate)}`
+      const courseEndsFirst =
+        forecast.courseEndDate !== null && forecast.courseEndDate < forecast.runOutDate
       return {
         headline: `${days} of inventory`,
         secondary:
-          forecast.courseEndsFirst && forecast.courseEndDate
+          courseEndsFirst && forecast.courseEndDate
             ? `${runOut} · Course ends ${formatCalendarDate(forecast.courseEndDate)}`
             : runOut,
       }
     }
 
+    case "beyond-horizon":
+      return {
+        headline: `${HORIZON_YEARS}+ years of inventory`,
+        secondary: forecast.courseEndDate
+          ? `Course ends ${formatCalendarDate(forecast.courseEndDate)}`
+          : null,
+      }
+
     case "less-than-a-day":
       return {
         headline: "Less than a day of inventory",
-        secondary: "Runs out today",
+        secondary: `Runs out ${formatCalendarDate(forecast.runOutDate)}`,
       }
 
     case "out-of-stock":
