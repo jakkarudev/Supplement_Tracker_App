@@ -49,9 +49,8 @@ export function TodayRoutine({ date: selectedDate, onSelectDate }: TodayRoutineP
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key)!.push(item)
     }
-    return [...groups.entries()].sort(([, a], [, b]) =>
-      a[0].time.localeCompare(b[0].time),
-    )
+    // Doses arrive ordered from 05:00, so first-seen order is logical-day order.
+    return [...groups.entries()]
   }, [doses])
 
   const takenCount = regimen.summary.taken

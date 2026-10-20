@@ -32,6 +32,16 @@ const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 
 const MILLISECONDS_PER_DAY = 86_400_000
 
+/** The local hour at which one Logical Day becomes the next. */
+const LOGICAL_DAY_START_HOUR = 5
+const LOGICAL_DAY_START_MINUTES = LOGICAL_DAY_START_HOUR * 60
+const MINUTES_PER_DAY = 24 * 60
+
+/** Whether a local clock time falls before the logical day's 05:00 start. */
+function isBeforeLogicalDayStart(hour: number, minute: number): boolean {
+  return hour * 60 + minute < LOGICAL_DAY_START_MINUTES
+}
+
 /** Builds the stable identity key for one supplement's dose on a date and time. */
 export function doseKey(supplementId: string, date: CalendarDate, time: string): string {
   return `${supplementId}|${date}|${time}`
@@ -105,9 +115,17 @@ export function isCalendarDate(value: unknown): value is CalendarDate {
   )
 }
 
-/** Returns today's local calendar date as "YYYY-MM-DD". */
+/** Formats a local Date as the Calendar Date of its Logical Day. */
+export function logicalDateFrom(at: Date): CalendarDate {
+  const calendar = calendarDateFrom(at)
+  return isBeforeLogicalDayStart(at.getHours(), at.getMinutes())
+    ? addDays(calendar, -1)
+    : calendar
+}
+
+/** Returns the current Logical Day as a Calendar Date. */
 export function today(): CalendarDate {
-  return calendarDateFrom(new Date())
+  return logicalDateFrom(new Date())
 }
 
 /** Adds calendar days to a date, keeping local-date behavior. */
@@ -115,6 +133,17 @@ export function addDays(date: CalendarDate, days: number): CalendarDate {
   const next = localDateFromCalendarDate(date)
   next.setDate(next.getDate() + days)
   return calendarDateFrom(next)
+}
+
+/** Returns the physical Calendar Date on which a logical day's time occurs. */
+export function physicalDateForTime(
+  logicalDate: CalendarDate,
+  time: string,
+): CalendarDate {
+  const { hour, minute } = clockFromTime(time)
+  return isBeforeLogicalDayStart(hour, minute)
+    ? addDays(logicalDate, 1)
+    : logicalDate
 }
 
 /** Parses a calendar date to local day-of-week (0=Sun … 6=Sat). */
@@ -137,7 +166,7 @@ export function formatCalendarDate(
   return localDateFromCalendarDate(date).toLocaleDateString("en-US", options)
 }
 
-/** Returns the supplement's scheduled doses for one calendar date. */
+/** Returns the supplement's scheduled doses for one logical day, ordered from 05:00. */
 export function scheduledDoses(
   supplements: Supplement[],
   date: CalendarDate,
@@ -165,11 +194,15 @@ export function scheduledDoses(
   }
 
   return ordered
-    .sort((a, b) => a.dose.time.localeCompare(b.dose.time) || a.order - b.order)
+    .sort(
+      (a, b) =>
+        minutesIntoLogicalDay(a.dose.time) - minutesIntoLogicalDay(b.dose.time) ||
+        a.order - b.order,
+    )
     .map(({ dose }) => dose)
 }
 
-/** Returns one calendar day's scheduled doses joined with their dose logs. */
+/** Returns one logical day's scheduled doses joined with their dose logs. */
 export function dayRegimen(
   { supplements, doseLogs }: { supplements: Supplement[]; doseLogs: DoseLog[] },
   date: CalendarDate,
@@ -187,7 +220,7 @@ export function dayRegimen(
   return { date, doses, summary: { total: doses.length, taken } }
 }
 
-/** Returns schedule-only doses over a date-major horizon starting at `fromDate`. */
+/** Returns schedule-only doses over a logical-date-major horizon starting at `fromDate`. */
 export function upcomingScheduledDoses(
   supplements: Supplement[],
   fromDate: CalendarDate,
@@ -206,6 +239,16 @@ export function upcomingScheduledDoses(
 export function clockFromTime(time: string): { hour: number; minute: number } {
   const [hour, minute] = time.split(":").map(Number)
   return { hour, minute }
+}
+
+/** Minutes elapsed since the logical day's 05:00 start, in [0, 1440). */
+export function minutesIntoLogicalDay(time: string): number {
+  const { hour, minute } = clockFromTime(time)
+  return (
+    ((hour * 60 + minute - LOGICAL_DAY_START_MINUTES) % MINUTES_PER_DAY +
+      MINUTES_PER_DAY) %
+    MINUTES_PER_DAY
+  )
 }
 
 /**
@@ -254,9 +297,10 @@ export function formatTimeForDisplay(time: string): string {
   return `${String(displayHour).padStart(2, "0")}:${minute} ${meridiem}`
 }
 
-/** Derives the named part of the day from a canonical "HH:mm" time. */
+/** Derives the named part of the logical day from a canonical "HH:mm" time. */
 export function periodFromTime(time: string): Period {
-  const { hour } = clockFromTime(time)
+  const { hour, minute } = clockFromTime(time)
+  if (isBeforeLogicalDayStart(hour, minute)) return "Night"
   if (hour < 12) return "Morning"
   if (hour < 17) return "Afternoon"
   if (hour < 21) return "Evening"

@@ -1,9 +1,10 @@
 import type { DoseLog, Supplement } from "./supplements-data"
 import {
-  calendarDateFrom,
   clockFromTime,
   doseKey,
+  logicalDateFrom,
   periodFromTime,
+  physicalDateForTime,
   upcomingScheduledDoses,
   type CalendarDate,
   type ScheduledDose,
@@ -12,7 +13,7 @@ import {
 export const REMINDER_HORIZON_DAYS = 30
 export const MAX_PENDING_REMINDERS = 60
 
-/** One reminder for every unlogged supplement due at a calendar date and time. */
+/** One reminder for every unlogged supplement due at a logical date and time. */
 export type PlannedReminder = {
   id: number
   date: CalendarDate
@@ -33,7 +34,7 @@ export type ReminderPlanOptions = {
   maxReminders?: number
 }
 
-/** A stable non-zero id for a calendar date and time. The sign bit is cleared
+/** A stable non-zero id for a logical date and time. The sign bit is cleared
  * because pending local notification ids are signed 32-bit integers. */
 export function reminderIdFor(date: CalendarDate, time: string): number {
   const key = `reminder|${date}|${time}`
@@ -54,6 +55,16 @@ function dateTimeFromLocalParts(
 ): Date {
   const [year, month, day] = date.split("-").map(Number)
   return new Date(year, month - 1, day, hour, minute, 0, 0)
+}
+
+/**
+ * Maps a logical date and time to its physical timestamp. A time before 05:00
+ * occurs on the following physical date; an ambiguous local time resolves to
+ * its first occurrence and a nonexistent one rolls forward, as native Date does.
+ */
+function dateTimeFromLogicalTime(date: CalendarDate, time: string): Date {
+  const { hour, minute } = clockFromTime(time)
+  return dateTimeFromLocalParts(physicalDateForTime(date, time), hour, minute)
 }
 
 function dosageLabel(supplement: Supplement): string {
@@ -84,8 +95,9 @@ function buildReminder(
 }
 
 /**
- * Builds the Reminder Plan from the Regimen and Dose Logs. Scheduled Doses with
- * any Dose Log, and times at or before `now`, produce no reminder. Inventory is
+ * Builds the Reminder Plan from the Regimen and Dose Logs over a horizon that
+ * starts at the current Logical Day. Scheduled Doses with any Dose Log, and
+ * physical times at or before `now`, produce no reminder. Inventory is
  * deliberately ignored.
  */
 export function planReminders(
@@ -99,14 +111,13 @@ export function planReminders(
   const logged = new Set(
     doseLogs.map((log) => doseKey(log.supplementId, log.date, log.time)),
   )
-  const start = calendarDateFrom(now)
+  const start = logicalDateFrom(now)
   const groups = new Map<string, { date: CalendarDate; time: string; at: Date; doses: ScheduledDose[] }>()
 
   for (const dose of upcomingScheduledDoses(supplements, start, horizonDays)) {
     if (logged.has(dose.key)) continue
 
-    const { hour, minute } = clockFromTime(dose.time)
-    const at = dateTimeFromLocalParts(dose.date, hour, minute)
+    const at = dateTimeFromLogicalTime(dose.date, dose.time)
     if (at.getTime() <= now.getTime()) continue
 
     const slot = `${dose.date}|${dose.time}`

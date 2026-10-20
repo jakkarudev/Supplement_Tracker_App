@@ -12,6 +12,7 @@ import {
   normalizeTimeList,
   normalizeTimeOfDay,
   periodFromTime,
+  physicalDateForTime,
   scheduledDoses,
   today,
   upcomingScheduledDoses,
@@ -66,8 +67,10 @@ describe("time vocabulary", () => {
     expect(formatTimeForDisplay("23:59")).toBe("11:59 PM")
   })
 
-  it("derives the period at its boundaries, including midnight", () => {
-    expect(periodFromTime("00:00")).toBe("Morning")
+  it("derives the period at its boundaries, with Night spanning midnight", () => {
+    expect(periodFromTime("00:00")).toBe("Night")
+    expect(periodFromTime("04:59")).toBe("Night")
+    expect(periodFromTime("05:00")).toBe("Morning")
     expect(periodFromTime("11:59")).toBe("Morning")
     expect(periodFromTime("12:00")).toBe("Afternoon")
     expect(periodFromTime("16:59")).toBe("Afternoon")
@@ -96,12 +99,23 @@ describe("calendar vocabulary", () => {
     vi.useRealTimers()
   })
 
-  it("returns today's local calendar date", () => {
+  it("returns the current Calendar Date from 05:00 and the previous one before it", () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 0, 1, 23, 30))
     expect(today()).toBe("2026-01-01")
     vi.setSystemTime(new Date(2026, 0, 2, 0, 30))
+    expect(today()).toBe("2026-01-01")
+    vi.setSystemTime(new Date(2026, 0, 2, 4, 59, 59))
+    expect(today()).toBe("2026-01-01")
+    vi.setSystemTime(new Date(2026, 0, 2, 5, 0))
     expect(today()).toBe("2026-01-02")
+  })
+
+  it("maps a logical time before 05:00 to the next physical date", () => {
+    expect(physicalDateForTime("2026-05-04", "00:00")).toBe("2026-05-05")
+    expect(physicalDateForTime("2026-05-04", "04:59")).toBe("2026-05-05")
+    expect(physicalDateForTime("2026-05-04", "05:00")).toBe("2026-05-04")
+    expect(physicalDateForTime("2026-05-04", "23:59")).toBe("2026-05-04")
   })
 
   it("adds days across month and year boundaries in local time", () => {
@@ -207,6 +221,15 @@ describe("scheduledDoses schedule eligibility", () => {
     expect(scheduledDoses([mondayOnly], "2026-05-05")).toEqual([])
   })
 
+  it("matches a night dose's weekday against the logical day", () => {
+    const saturdayOnly = makeSupplement({ days: [6], times: ["01:00"] })
+
+    const doses = scheduledDoses([saturdayOnly], "2026-05-02")
+    expect(doses).toHaveLength(1)
+    expect(doses[0]).toMatchObject({ date: "2026-05-02", time: "01:00", period: "Night" })
+    expect(scheduledDoses([saturdayOnly], "2026-05-03")).toEqual([])
+  })
+
   it("produces no doses for invalid times", () => {
     const supplement = makeSupplement({ times: ["noon", "24:00", "8:00"] })
 
@@ -235,6 +258,23 @@ describe("scheduledDoses ordering and shape", () => {
       "08:00 first",
       "08:00 second",
       "09:00 first",
+    ])
+  })
+
+  it("orders chronologically from the 05:00 start of the logical day", () => {
+    const supplement = makeSupplement({
+      times: ["00:00", "04:59", "05:00", "20:59", "21:00", "23:59"],
+    })
+
+    const doses = scheduledDoses([supplement], "2026-05-04")
+
+    expect(doses.map((dose) => dose.time)).toEqual([
+      "05:00",
+      "20:59",
+      "21:00",
+      "23:59",
+      "00:00",
+      "04:59",
     ])
   })
 

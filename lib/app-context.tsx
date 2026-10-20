@@ -411,13 +411,14 @@ export function useInventory() {
 /** Returns 7-day adherence stats and chart data derived from stored logs. */
 export function useAdherenceStats() {
   const { supplements, doseLogs, wellnessLogs } = useAppState()
+  const currentDate = today()
 
   return useMemo(() => {
-    // Build an array of the last 7 days in local time ("YYYY-MM-DD")
-    const days = Array.from({ length: 7 }, (_, i) => addDays(today(), i - 6))
+    // The last 7 logical days, ending with the current one.
+    const days = Array.from({ length: 7 }, (_, i) => addDays(currentDate, i - 6))
 
-    const dailyAdherence: (number | null)[] = days.map((date) => {
-      const { summary } = dayRegimen({ supplements, doseLogs }, date)
+    const dailyAdherence: (number | null)[] = days.map((day) => {
+      const { summary } = dayRegimen({ supplements, doseLogs }, day)
       if (summary.total === 0) return null // nothing scheduled → don't count
       return Math.round((summary.taken / summary.total) * 100)
     })
@@ -426,10 +427,10 @@ export function useAdherenceStats() {
     // and neither helps nor breaks the streak, but it stays in the chart data.
     const { adherenceRate, streak } = summarizeAdherence(dailyAdherence)
 
-    const chartData = days.map((date, i) => {
-      const wlog = wellnessLogs.find((w) => w.date === date)
+    const chartData = days.map((day, i) => {
+      const wlog = wellnessLogs.find((w) => w.date === day)
       return {
-        day: formatCalendarDate(date, { weekday: "short" }),
+        day: formatCalendarDate(day, { weekday: "short" }),
         adherence: dailyAdherence[i],
         energy: wlog?.energy ?? null,
         focus: wlog?.focus ?? null,
@@ -437,7 +438,7 @@ export function useAdherenceStats() {
     })
 
     return { adherenceRate, streak, chartData }
-  }, [supplements, doseLogs, wellnessLogs])
+  }, [supplements, doseLogs, wellnessLogs, currentDate])
 }
 
 /** Generate a stable ID for new supplements and dose logs. */

@@ -53,6 +53,42 @@ describe("planReminders", () => {
     expect(plan[0]).toMatchObject({ date: "2026-05-05", time: "08:00" })
   })
 
+  it("starts at the logical day and moves early-morning times to the next physical date", () => {
+    const now = new Date(2026, 4, 5, 2, 0, 0) // Tuesday 02:00, still logical Monday
+    const supplement = makeSupplement({ times: ["01:00", "03:00", "05:00", "23:00"] })
+
+    const plan = planReminders({ supplements: [supplement], doseLogs: [] }, now)
+
+    expect(plan[0]).toMatchObject({
+      date: "2026-05-04",
+      time: "03:00",
+      at: new Date(2026, 4, 5, 3, 0, 0),
+    })
+    expect(plan.find((item) => item.date === "2026-05-04" && item.time === "01:00")).toBeUndefined()
+    expect(
+      plan.find((item) => item.date === "2026-05-04" && item.time === "23:00"),
+    ).toBeUndefined()
+    expect(
+      plan.find((item) => item.date === "2026-05-05" && item.time === "01:00"),
+    ).toMatchObject({ at: new Date(2026, 4, 6, 1, 0, 0) })
+    expect(
+      plan.find((item) => item.date === "2026-05-05" && item.time === "05:00"),
+    ).toMatchObject({ at: new Date(2026, 4, 5, 5, 0, 0) })
+  })
+
+  it("matches weekdays against the logical day so a Saturday 01:00 dose fires on Sunday", () => {
+    const now = new Date(2026, 4, 1, 6, 0, 0) // Friday 06:00
+    const saturdayOnly = makeSupplement({ days: [6], times: ["01:00"] })
+
+    const plan = planReminders({ supplements: [saturdayOnly], doseLogs: [] }, now)
+
+    expect(plan[0]).toMatchObject({
+      date: "2026-05-02",
+      time: "01:00",
+      at: new Date(2026, 4, 3, 1, 0, 0),
+    })
+  })
+
   it("excludes a time exactly at now and includes the next minute", () => {
     const now = new Date(2026, 4, 4, 8, 0, 0)
     const supplements = [makeSupplement({ times: ["08:00", "08:01"] })]
@@ -117,8 +153,8 @@ describe("planReminders", () => {
     expect(plan.some((item) => item.date === "2026-05-04" && item.time === "08:00")).toBe(false)
   })
 
-  it("covers 30 days from today, nearest first", () => {
-    const now = new Date(2026, 4, 4, 0, 0, 0)
+  it("covers 30 logical days from the logical day, nearest first", () => {
+    const now = new Date(2026, 4, 4, 6, 0, 0)
     const daily = makeSupplement({ times: ["07:00"] })
 
     const plan = planReminders({ supplements: [daily], doseLogs: [] }, now)
@@ -158,7 +194,7 @@ describe("planReminders", () => {
   })
 
   it("ignores inventory and falls back to generic copy without a dosage", () => {
-    const now = new Date(2026, 4, 4, 0, 0, 0)
+    const now = new Date(2026, 4, 4, 6, 0, 0)
     const supplement = makeSupplement({
       currentCount: 0,
       restockReminder: true,
