@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { DoseTimeSheet } from "./dose-time-sheet"
 import { AppStateContext } from "@/lib/app-context"
 import type { AppState } from "@/lib/app-state"
+import type { Supplement } from "@/lib/supplements-data"
 
 vi.stubGlobal(
   "ResizeObserver",
@@ -18,11 +19,56 @@ window.HTMLElement.prototype.scrollIntoView = vi.fn()
 
 type SheetProps = React.ComponentProps<typeof DoseTimeSheet>
 
+const copper: Supplement = {
+  id: "copper",
+  name: "Copper",
+  brand: "Now Foods",
+  potency: "2 mg",
+  dosage: "1 capsule",
+  form: "Capsule",
+  startedOn: "2026-01-01",
+  days: [0, 1, 2, 3, 4, 5, 6],
+  times: ["08:00"],
+  totalCount: 60,
+  currentCount: 60,
+  restockReminder: false,
+  restockThreshold: 10,
+}
+
+const zinc: Supplement = { ...copper, id: "zinc", name: "Zinc", times: ["12:00"] }
+
 function stateWith(timeFormat: "12h" | "24h"): AppState {
   return {
     supplements: [],
     doseLogs: [],
     wellnessLogs: [],
+    spacingRules: [],
+    settings: { timeFormat },
+  }
+}
+
+function stateWithRule(timeFormat: "12h" | "24h"): AppState {
+  return {
+    supplements: [copper, zinc],
+    doseLogs: [
+      {
+        id: "log-1",
+        supplementId: "zinc",
+        date: "2026-05-04",
+        time: "12:00",
+        status: "taken",
+        takenAt: "09:00",
+      },
+    ],
+    wellnessLogs: [],
+    spacingRules: [
+      {
+        id: "rule-1",
+        supplementAId: "copper",
+        supplementBId: "zinc",
+        minimumIntervalMinutes: 240,
+      },
+    ],
     settings: { timeFormat },
   }
 }
@@ -30,15 +76,17 @@ function stateWith(timeFormat: "12h" | "24h"): AppState {
 function renderSheet(
   overrides: Partial<SheetProps> = {},
   timeFormat: "12h" | "24h" = "12h",
+  state: AppState = stateWith(timeFormat),
 ) {
   const onSave = vi.fn()
   const onOpenChange = vi.fn()
 
   render(
-    <AppStateContext.Provider value={stateWith(timeFormat)}>
+    <AppStateContext.Provider value={state}>
       <DoseTimeSheet
         open
         mode="log"
+        supplementId="copper"
         logicalDate="2026-05-04"
         scheduledTime="08:00"
         initialTime="10:12"
@@ -135,5 +183,37 @@ describe("DoseTimeSheet", () => {
 
     expect(onSave).not.toHaveBeenCalled()
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("refuses a time that breaks a spacing rule and names the earliest safe time", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 4, 4, 10, 0))
+
+    const { onSave } = renderSheet({}, "12h", stateWithRule("12h"))
+
+    fireEvent.change(screen.getByLabelText("Actual time"), {
+      target: { value: "10:00" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    const alert = screen.getByRole("alert").textContent ?? ""
+    expect(alert).toMatch(/earliest safe time/i)
+    expect(alert).toMatch(/01:00 PM/)
+    expect(alert).toMatch(/Zinc/)
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it("saves a time that keeps the spacing gap", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 4, 4, 10, 0))
+
+    const { onSave } = renderSheet({}, "12h", stateWithRule("12h"))
+
+    fireEvent.change(screen.getByLabelText("Actual time"), {
+      target: { value: "05:00" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(onSave).toHaveBeenCalledWith("05:00")
   })
 })

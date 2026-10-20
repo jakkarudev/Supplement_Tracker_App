@@ -95,6 +95,7 @@ function serializeState(state: AppState): string {
     supplements: state.supplements,
     doseLogs: state.doseLogs,
     wellnessLogs: state.wellnessLogs,
+    spacingRules: state.spacingRules,
     settings: state.settings,
   })
 }
@@ -104,6 +105,7 @@ function emptyState(): AppState {
     supplements: [],
     doseLogs: [],
     wellnessLogs: [],
+    spacingRules: [],
     settings: { ...DEFAULT_SETTINGS },
   }
 }
@@ -111,8 +113,14 @@ function emptyState(): AppState {
 /** Zero drop and repair counts, for a load with nothing to report per collection. */
 function noCounts(): RecoveryCounts {
   return {
-    dropped: { supplements: 0, doseLogs: 0, wellnessLogs: 0 },
-    repaired: { supplements: 0, doseLogs: 0, wellnessLogs: 0, settings: 0 },
+    dropped: { supplements: 0, doseLogs: 0, wellnessLogs: 0, spacingRules: 0 },
+    repaired: {
+      supplements: 0,
+      doseLogs: 0,
+      wellnessLogs: 0,
+      spacingRules: 0,
+      settings: 0,
+    },
   }
 }
 

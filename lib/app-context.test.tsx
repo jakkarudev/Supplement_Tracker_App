@@ -10,6 +10,7 @@ import {
 } from "./app-context"
 import { STORAGE_KEY } from "./app-storage"
 import type { AppState } from "./app-state"
+import type { ReminderPlanInput } from "./reminders"
 
 /**
  * The recovery toast is the seam for what a recovered load tells the user.
@@ -22,6 +23,21 @@ const toastMock = vi.hoisted(() => ({
 }))
 
 vi.mock("sonner", () => ({ toast: toastMock }))
+
+/**
+ * The reminder sync is the seam that carries the spacing rules into the plan.
+ * It is mocked so the input it receives can be asserted.
+ */
+const reminderMock = vi.hoisted(() => ({
+  scheduleNativeSupplementReminders: vi.fn(async (_input: ReminderPlanInput) => ({
+    status: "not-native" as const,
+  })),
+}))
+
+vi.mock("@/lib/reminders", () => ({
+  scheduleNativeSupplementReminders: reminderMock.scheduleNativeSupplementReminders,
+  requestReminderPermission: vi.fn(async () => ({ status: "not-native" })),
+}))
 
 /**
  * jsdom ships no storage implementation, so the provider gets a simple
@@ -91,6 +107,49 @@ const STORED_SUPPLEMENT = {
   currentCount: 60,
   restockReminder: false,
   restockThreshold: 10,
+}
+
+const RULE = {
+  id: "rule-1",
+  supplementAId: "vitamin-d",
+  supplementBId: "zinc",
+  minimumIntervalMinutes: 240,
+}
+
+function SpacingProbe() {
+  const { spacingRules } = useAppState()
+  const dispatch = useAppDispatch()
+
+  return (
+    <div>
+      <span data-testid="rules">
+        {spacingRules.map((rule) => `${rule.id}:${rule.minimumIntervalMinutes}`).join(",")}
+      </span>
+      <button
+        type="button"
+        onClick={() => dispatch({ type: "ADD_SPACING_RULE", payload: RULE })}
+      >
+        add rule
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          dispatch({
+            type: "UPDATE_SPACING_RULE",
+            payload: { ...RULE, minimumIntervalMinutes: 360 },
+          })
+        }
+      >
+        update rule
+      </button>
+      <button
+        type="button"
+        onClick={() => dispatch({ type: "DELETE_SPACING_RULE", payload: RULE.id })}
+      >
+        delete rule
+      </button>
+    </div>
+  )
 }
 
 let storage: ReturnType<typeof installLocalStorage>
@@ -178,6 +237,88 @@ describe("useTimeFormat", () => {
 
     expect(screen.getByTestId("format").textContent).toBe("12h")
     expect(screen.getByTestId("time").textContent).toBe("11:59 PM")
+  })
+})
+
+describe("spacing rules", () => {
+  it("adds, updates, and deletes a rule and persists it", async () => {
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        schemaVersion: 4,
+        supplements: [STORED_SUPPLEMENT],
+        doseLogs: [],
+        wellnessLogs: [],
+        spacingRules: [],
+        settings: { timeFormat: "12h" },
+      }),
+    )
+
+    render(
+      <AppProvider>
+        <SpacingProbe />
+      </AppProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "add rule" }))
+    expect(screen.getByTestId("rules").textContent).toBe("rule-1:240")
+
+    fireEvent.click(screen.getByRole("button", { name: "update rule" }))
+    expect(screen.getByTestId("rules").textContent).toBe("rule-1:360")
+
+    fireEvent.click(screen.getByRole("button", { name: "delete rule" }))
+    expect(screen.getByTestId("rules").textContent).toBe("")
+
+    const persisted = JSON.parse(storage.getItem(STORAGE_KEY) ?? "{}")
+    expect(persisted.spacingRules).toEqual([])
+  })
+
+  it("keeps the rules when the state is hydrated from storage", () => {
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        schemaVersion: 4,
+        supplements: [STORED_SUPPLEMENT, { ...STORED_SUPPLEMENT, id: "zinc", name: "Zinc" }],
+        doseLogs: [],
+        wellnessLogs: [],
+        spacingRules: [RULE],
+        settings: { timeFormat: "12h" },
+      }),
+    )
+
+    render(
+      <AppProvider>
+        <SpacingProbe />
+      </AppProvider>,
+    )
+
+    expect(screen.getByTestId("rules").textContent).toBe("rule-1:240")
+  })
+
+  it("passes the rules into the reminder sync", () => {
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        schemaVersion: 4,
+        supplements: [STORED_SUPPLEMENT, { ...STORED_SUPPLEMENT, id: "zinc", name: "Zinc" }],
+        doseLogs: [],
+        wellnessLogs: [],
+        spacingRules: [RULE],
+        settings: { timeFormat: "12h" },
+      }),
+    )
+
+    render(
+      <AppProvider>
+        <SpacingProbe />
+      </AppProvider>,
+    )
+
+    const inputs = reminderMock.scheduleNativeSupplementReminders.mock.calls.map(
+      (call) => call[0],
+    )
+    expect(inputs.length).toBeGreaterThan(0)
+    expect(inputs[inputs.length - 1].spacingRules).toEqual([RULE])
   })
 })
 
