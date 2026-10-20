@@ -10,6 +10,15 @@ export type RegimenState = {
   spacingRules: SpacingRule[]
 }
 
+/**
+ * The state the dose log write model owns: the supplements and their dose
+ * logs. The write model knows nothing about rules, so it never carries them.
+ */
+export type DoseLogState = {
+  supplements: Supplement[]
+  doseLogs: DoseLog[]
+}
+
 /** A user's decision about one scheduled dose. */
 export type LogDoseInput = {
   supplementId: string
@@ -102,9 +111,10 @@ function withTakenAt(log: DoseLog, value: string | undefined): DoseLog {
  * difference: entering "taken" consumes the supplement's dosage amount, and
  * leaving "taken" restores the amount recorded when it was taken. "pending"
  * means no log exists; inventory may go negative rather than clamping, so the
- * arithmetic stays reversible.
+ * arithmetic stays reversible. The write model owns the supplements and their
+ * dose logs only: a Spacing Rule never reaches it.
  */
-export function logDose(state: RegimenState, input: LogDoseInput): RegimenState {
+export function logDose(state: DoseLogState, input: LogDoseInput): DoseLogState {
   const key = doseKey(input.supplementId, input.date, input.time)
   const index = state.doseLogs.findIndex(
     (log) => doseKey(log.supplementId, log.date, log.time) === key,
@@ -134,7 +144,6 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
       doseLogs: existing
         ? state.doseLogs.filter((_, logIndex) => logIndex !== index)
         : state.doseLogs,
-      spacingRules: state.spacingRules,
     }
   }
 
@@ -155,7 +164,6 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
       doseLogs: state.doseLogs.map((log, logIndex) =>
         logIndex === index ? nextLog : log,
       ),
-      spacingRules: state.spacingRules,
     }
   }
 
@@ -173,5 +181,5 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
     newLog = withTakenAt(newLog, input.takenAt)
   }
 
-  return { supplements, doseLogs: [...state.doseLogs, newLog], spacingRules: state.spacingRules }
+  return { supplements, doseLogs: [...state.doseLogs, newLog] }
 }

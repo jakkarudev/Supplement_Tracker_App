@@ -17,6 +17,7 @@ export const CURRENT_SCHEMA_VERSION = 4
 
 const LEGACY_STARTED_ON = "1970-01-01"
 const DOSE_STATUSES: readonly DoseStatus[] = ["taken", "pending", "snoozed"]
+const MINUTES_PER_HOUR = 60
 
 export type SchemaVersionDetection =
   | { status: "ok"; version: number }
@@ -383,7 +384,7 @@ function storedDoseLogs(payload: StoredPayload): unknown[] {
 
 /**
  * Validates a stored spacing rule. A rule links two different Supplements
- * that both still exist, and carries a positive whole number of minutes. A
+ * that both still exist, and carries a positive whole number of hours. A
  * rule that fails any of those checks cannot be honoured, so it is dropped
  * rather than repaired into something the user never chose.
  */
@@ -406,8 +407,19 @@ function normalizeSpacingRule(
   ) {
     return null
   }
+  // A Spacing Rule is measured in whole hours, so a fraction of an hour is
+  // not a rule the app can honour.
+  if (minimumIntervalMinutes % MINUTES_PER_HOUR !== 0) return null
 
   return { id, supplementAId, supplementBId, minimumIntervalMinutes }
+}
+
+/**
+ * The identity of a rule's unordered pair. A rule is symmetric, so A → B and
+ * B → A are the same rule.
+ */
+function spacingPairKey(rule: SpacingRule): string {
+  return [rule.supplementAId, rule.supplementBId].sort().join("|")
 }
 
 /** Validates and salvages the collections of a canonical-shaped payload. */
@@ -428,9 +440,18 @@ function normalizeStoredState(payload: StoredPayload): {
   // A rule can only be honoured when both of its supplements survived
   // validation, so it is judged against the loaded supplements.
   const supplementIds = new Set(supplements.records.map((supplement) => supplement.id))
+  // A rule is symmetric, so a pair carries one rule: a second rule for the
+  // same pair is dropped and counted.
+  const seenPairs = new Set<string>()
   const spacingRules = normalizeRecords(rawSpacingRules, (value) => {
     const rule = normalizeSpacingRule(value, supplementIds)
-    return rule === null ? null : { record: rule, repaired: false }
+    if (rule === null) return null
+
+    const pair = spacingPairKey(rule)
+    if (seenPairs.has(pair)) return null
+    seenPairs.add(pair)
+
+    return { record: rule, repaired: false }
   })
 
   return {

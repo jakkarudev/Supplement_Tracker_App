@@ -221,7 +221,7 @@ describe("planReminders with spacing rules", () => {
     minimumIntervalMinutes: 240,
   }
 
-  it("plans a shifted dose at its adjusted time with the matching id", () => {
+  it("plans an adjusted dose at its adjusted time with the matching id", () => {
     const now = new Date(2026, 4, 4, 6, 0, 0)
     const copper = makeSupplement({ id: "copper", name: "Copper", times: ["08:00"] })
     const zinc = makeSupplement({ id: "zinc", name: "Zinc", times: ["12:00"] })
@@ -242,7 +242,7 @@ describe("planReminders with spacing rules", () => {
     expect(reminder?.id).toBe(reminderIdFor("2026-05-04", "14:00"))
   })
 
-  it("gives the shifted dose a different id from the slot it left", () => {
+  it("gives the adjusted dose a different id from the slot it left", () => {
     const now = new Date(2026, 4, 4, 6, 0, 0)
     const copper = makeSupplement({ id: "copper", name: "Copper", times: ["08:00"] })
     const zinc = makeSupplement({ id: "zinc", name: "Zinc", times: ["12:00"] })
@@ -259,7 +259,7 @@ describe("planReminders with spacing rules", () => {
   it("plans no reminder for a dose whose plan conflicts", () => {
     const now = new Date(2026, 4, 4, 6, 0, 0)
     const copper = makeSupplement({ id: "copper", name: "Copper", times: ["01:00"] })
-    const zinc = makeSupplement({ id: "zinc", name: "Zinc", times: ["12:00"] })
+    const zinc = makeSupplement({ id: "zinc", name: "Zinc", times: ["23:00"] })
     const doseLogs = [makeLog("copper", "2026-05-04", "01:00", "taken", "01:00")]
 
     const plan = planReminders(
@@ -270,7 +270,27 @@ describe("planReminders with spacing rules", () => {
     expect(plan.some((item) => item.date === "2026-05-04")).toBe(false)
   })
 
-  it("plans a shifted dose that only moves later days", () => {
+  it("plans a dose that is outside the window around the partner at its own slot", () => {
+    const now = new Date(2026, 4, 4, 6, 0, 0)
+    const copper = makeSupplement({ id: "copper", name: "Copper", times: ["01:00"] })
+    const zinc = makeSupplement({ id: "zinc", name: "Zinc", times: ["12:00"] })
+    const doseLogs = [makeLog("copper", "2026-05-04", "01:00", "taken", "01:00")]
+
+    const plan = planReminders(
+      { supplements: [copper, zinc], doseLogs, spacingRules: [RULE] },
+      now,
+    )
+
+    const reminder = plan.find((item) => item.date === "2026-05-04")
+
+    expect(reminder).toMatchObject({
+      time: "12:00",
+      supplementIds: ["zinc"],
+    })
+    expect(reminder?.id).toBe(reminderIdFor("2026-05-04", "12:00"))
+  })
+
+  it("plans an adjusted dose that only moves later days", () => {
     const now = new Date(2026, 4, 4, 6, 0, 0)
     const copper = makeSupplement({ id: "copper", name: "Copper", times: ["08:00"] })
     const zinc = makeSupplement({ id: "zinc", name: "Zinc", times: ["12:00"] })

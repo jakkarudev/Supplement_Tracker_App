@@ -1,10 +1,8 @@
 import type { DoseLog, SpacingRule, Supplement } from "./supplements-data"
 import {
-  addDays,
   dayRegimen,
   minutesIntoLogicalDay,
   normalizeTimeOfDay,
-  scheduledDoses,
   type CalendarDate,
   type ScheduledDose,
 } from "./day-regimen"
@@ -26,10 +24,10 @@ export type SpacingConflict = {
   /** The rule's minimum interval, in minutes. */
   minimumIntervalMinutes: number
   /**
-   * The earliest time the dose may be taken, when the Logical Day has room
-   * for it. Null when no time on that day satisfies the rule.
+   * The time the dose could have been taken instead, when the Logical Day has
+   * room for it. Null when no time on that day satisfies the rule.
    */
-  earliestTime: string | null
+  earliestSafeTime: string | null
   /** The partner's Actual Intake Time, when the partner was already taken. */
   partnerTakenAt: string | null
 }
@@ -37,12 +35,11 @@ export type SpacingConflict = {
 /** What one Scheduled Dose may do on a Logical Day. */
 export type SpacingPlanEntry = {
   /**
-   * The earliest time the dose may be taken, or null when no rule constrains
-   * it. It can be earlier than the scheduled time, in which case the dose
-   * stays where it is.
+   * The rule's boundary for this dose: the earliest time the rule allows it
+   * to be taken, or null when no rule constrains it.
    */
-  earliestTime: string | null
-  /** The time the dose should happen: the later of its scheduled time and its earliest time. */
+  earliestAllowedTime: string | null
+  /** The time the dose should happen: the later of its scheduled time and the rule's boundary. */
   adjustedTime: string
   /** The conflict the dose is part of, if any. */
   conflict: SpacingConflict | null
@@ -59,7 +56,7 @@ export type SpacingInput = {
 }
 
 /** A candidate Actual Intake Time for one Supplement on one Logical Day. */
-export type SpacingViolationInput = {
+export type SpacingCheckInput = {
   supplementId: string
   logicalDate: CalendarDate
   takenAt: string
@@ -86,6 +83,12 @@ function timeFromLogicalMinutes(minutes: number): string | null {
   const minute = absolute % MINUTES_PER_HOUR
 
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
+}
+
+/** "4 hours" for a 240-minute rule. */
+export function intervalLabel(minutes: number): string {
+  const hours = minutes / MINUTES_PER_HOUR
+  return `${hours} ${hours === 1 ? "hour" : "hours"}`
 }
 
 /** A taken dose and the Actual Intake Time it was recorded with. */
@@ -117,15 +120,15 @@ function takenDosesWithActualTime(doses: ScheduledDose[]): TakenDose[] {
 
 /**
  * The earliest time a dose may be taken without breaking the gap with a
- * partner taken at `partnerMinutes`. The partner's actual time plus the
- * interval is the answer; when that falls outside the Logical Day, the time
- * before the partner is the only one left.
+ * partner taken at `partnerMinutes`: the partner's actual time plus the
+ * interval. Null when that time falls outside the Logical Day, because the
+ * time before the partner is in the past and cannot be taken.
  */
-function earliestSafeTime(partnerMinutes: number, intervalMinutes: number): string | null {
-  return (
-    timeFromLogicalMinutes(partnerMinutes + intervalMinutes) ??
-    timeFromLogicalMinutes(partnerMinutes - intervalMinutes)
-  )
+export function earliestSafeTime(
+  partnerMinutes: number,
+  intervalMinutes: number,
+): string | null {
+  return timeFromLogicalMinutes(partnerMinutes + intervalMinutes)
 }
 
 /**
@@ -133,9 +136,11 @@ function earliestSafeTime(partnerMinutes: number, intervalMinutes: number): stri
  *
  * Only a recorded Actual Intake Time constrains a partner: a Dose Log
  * without one says nothing about when the dose was taken, so it constrains
- * nothing. A taken dose holds its partner's pending doses to at least its
- * own actual time plus the rule's interval; taken doses keep their slot and
- * their log either way.
+ * nothing. A rule holds a pending dose back only when the dose's own
+ * scheduled slot falls inside the forbidden window around the partner's
+ * actual time: the gap is symmetric and is measured between actual intake
+ * times, so a dose that is already far enough away keeps its slot. A taken
+ * dose keeps its slot and its log either way.
  */
 export function buildSpacingPlan(
   { supplements, doseLogs, spacingRules }: SpacingInput,
@@ -144,8 +149,8 @@ export function buildSpacingPlan(
   const doses = dayRegimen({ supplements, doseLogs }, logicalDate).doses
   const taken = takenDosesWithActualTime(doses)
 
-  // The earliest minute each dose may be taken, and the conflict it carries.
-  const earliest = new Map<string, number>()
+  // The rule's boundary for each dose, and the conflict it carries.
+  const boundary = new Map<string, number>()
   const conflicts = new Map<string, SpacingConflict>()
 
   for (const rule of spacingRules) {
@@ -155,25 +160,28 @@ export function buildSpacingPlan(
     if (rule.supplementAId === rule.supplementBId) continue
 
     const interval = rule.minimumIntervalMinutes
-    const takenA = taken.filter((entry) => entry.dose.supplement.id === rule.supplementAId)
-    const takenB = taken.filter((entry) => entry.dose.supplement.id === rule.supplementBId)
-    const pendingA = doses.filter(
-      (dose) => dose.supplement.id === rule.supplementAId && dose.status === "pending",
-    )
-    const pendingB = doses.filter(
-      (dose) => dose.supplement.id === rule.supplementBId && dose.status === "pending",
-    )
 
-    for (const [partner, partners] of [
-      [takenA, pendingB],
-      [takenB, pendingA],
+    for (const [partnerId, pendingId] of [
+      [rule.supplementAId, rule.supplementBId],
+      [rule.supplementBId, rule.supplementAId],
     ] as const) {
-      for (const fact of partner) {
-        for (const dose of partners) {
+      const partnerDoses = taken.filter((entry) => entry.dose.supplement.id === partnerId)
+      const pendingDoses = doses.filter(
+        (dose) => dose.supplement.id === pendingId && dose.status === "pending",
+      )
+
+      for (const fact of partnerDoses) {
+        for (const dose of pendingDoses) {
+          const scheduled = minutesIntoLogicalDay(dose.time)
+
+          // The rule bites only when the dose's own slot falls inside the
+          // forbidden window around the partner's actual time.
+          if (Math.abs(scheduled - fact.minutes) >= interval) continue
+
           const allowed = fact.minutes + interval
-          const current = earliest.get(dose.key)
+          const current = boundary.get(dose.key)
           if (current === undefined || allowed > current) {
-            earliest.set(dose.key, allowed)
+            boundary.set(dose.key, allowed)
           }
 
           if (allowed > LAST_MINUTE_OF_LOGICAL_DAY && !conflicts.has(dose.key)) {
@@ -182,7 +190,7 @@ export function buildSpacingPlan(
               supplementId: dose.supplement.id,
               partnerSupplementId: fact.dose.supplement.id,
               minimumIntervalMinutes: interval,
-              earliestTime: null,
+              earliestSafeTime: earliestSafeTime(fact.minutes, interval),
               partnerTakenAt: fact.takenAt,
             })
           }
@@ -191,6 +199,9 @@ export function buildSpacingPlan(
     }
 
     // Two doses taken inside the forbidden window cannot both be right.
+    const takenA = taken.filter((entry) => entry.dose.supplement.id === rule.supplementAId)
+    const takenB = taken.filter((entry) => entry.dose.supplement.id === rule.supplementBId)
+
     for (const a of takenA) {
       for (const b of takenB) {
         if (Math.abs(a.minutes - b.minutes) >= interval) continue
@@ -200,7 +211,7 @@ export function buildSpacingPlan(
           supplementId: a.dose.supplement.id,
           partnerSupplementId: b.dose.supplement.id,
           minimumIntervalMinutes: interval,
-          earliestTime: earliestSafeTime(b.minutes, interval),
+          earliestSafeTime: earliestSafeTime(b.minutes, interval),
           partnerTakenAt: b.takenAt,
         })
         conflicts.set(b.dose.key, {
@@ -208,7 +219,7 @@ export function buildSpacingPlan(
           supplementId: b.dose.supplement.id,
           partnerSupplementId: a.dose.supplement.id,
           minimumIntervalMinutes: interval,
-          earliestTime: earliestSafeTime(a.minutes, interval),
+          earliestSafeTime: earliestSafeTime(a.minutes, interval),
           partnerTakenAt: a.takenAt,
         })
       }
@@ -218,13 +229,15 @@ export function buildSpacingPlan(
   const plan: SpacingPlan = {}
 
   for (const dose of doses) {
-    const allowed = earliest.get(dose.key)
+    const allowed = boundary.get(dose.key)
     const scheduled = minutesIntoLogicalDay(dose.time)
     const adjusted =
-      allowed === undefined ? dose.time : timeFromLogicalMinutes(Math.max(scheduled, allowed)) ?? dose.time
+      allowed === undefined
+        ? dose.time
+        : (timeFromLogicalMinutes(Math.max(scheduled, allowed)) ?? dose.time)
 
     plan[dose.key] = {
-      earliestTime: allowed === undefined ? null : timeFromLogicalMinutes(allowed),
+      earliestAllowedTime: allowed === undefined ? null : timeFromLogicalMinutes(allowed),
       adjustedTime: adjusted,
       conflict: conflicts.get(dose.key) ?? null,
     }
@@ -238,9 +251,9 @@ export function buildSpacingPlan(
  * time keeps every rule's gap. This is the check the time sheet applies
  * before it records a time.
  */
-export function spacingViolation(
+export function findSpacingConflict(
   { supplements, doseLogs, spacingRules }: SpacingInput,
-  { supplementId, logicalDate, takenAt }: SpacingViolationInput,
+  { supplementId, logicalDate, takenAt }: SpacingCheckInput,
 ): SpacingConflict | null {
   const normalized = normalizeTimeOfDay(takenAt)
   if (normalized === null) return null
@@ -268,45 +281,11 @@ export function spacingViolation(
         supplementId,
         partnerSupplementId: partnerId,
         minimumIntervalMinutes: interval,
-        earliestTime: earliestSafeTime(fact.minutes, interval),
+        earliestSafeTime: earliestSafeTime(fact.minutes, interval),
         partnerTakenAt: fact.takenAt,
       }
     }
   }
 
   return null
-}
-
-/**
- * The smallest gap, in minutes, between the two Supplements' scheduled times
- * on a day where both are scheduled. Null when they never share a day in the
- * scanned horizon, which means the base Schedules say nothing about the gap.
- */
-export function minimumScheduledGap(
-  supplementA: Supplement,
-  supplementB: Supplement,
-  fromDate: CalendarDate,
-  horizonDays = 28,
-): number | null {
-  let smallest: number | null = null
-
-  for (let index = 0; index < horizonDays; index++) {
-    const date = addDays(fromDate, index)
-    const doses = scheduledDoses([supplementA, supplementB], date)
-    const timesA = doses
-      .filter((dose) => dose.supplement.id === supplementA.id)
-      .map((dose) => dose.time)
-    const timesB = doses
-      .filter((dose) => dose.supplement.id === supplementB.id)
-      .map((dose) => dose.time)
-
-    for (const a of timesA) {
-      for (const b of timesB) {
-        const gap = Math.abs(minutesIntoLogicalDay(a) - minutesIntoLogicalDay(b))
-        if (smallest === null || gap < smallest) smallest = gap
-      }
-    }
-  }
-
-  return smallest
 }

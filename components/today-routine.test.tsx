@@ -241,7 +241,7 @@ describe("TodayRoutine spacing rules", () => {
     minimumIntervalMinutes: 240,
   }
 
-  it("shows the earliest time a shifted pending dose may be taken", () => {
+  it("shows the earliest time an adjusted pending dose may be taken", () => {
     mocks.state = {
       ...mocks.state,
       supplements: [supplement, zinc],
@@ -268,7 +268,7 @@ describe("TodayRoutine spacing rules", () => {
     expect(screen.getByText("Earliest at 14:00")).toBeTruthy()
   })
 
-  it("shows no earliest time when no rule shifts the dose", () => {
+  it("shows no earliest time when no rule adjusts the dose", () => {
     mocks.state = {
       ...mocks.state,
       supplements: [supplement, zinc],
@@ -307,7 +307,30 @@ describe("TodayRoutine spacing rules", () => {
     expect(notices[0].textContent).toMatch(/4 hours/)
   })
 
-  it("offers the shifted time as the default in the time sheet", () => {
+  it("offers the current time as the default while the adjusted time has not arrived", () => {
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [takenLog({ takenAt: "10:00" })],
+      spacingRules: [RULE],
+    }
+
+    renderRoutine()
+
+    const sliders = screen.getAllByRole("button", { name: "Slide to confirm dose" })
+    fireEvent.pointerDown(sliders[0], { pointerId: 1 })
+    fireEvent.pointerUp(window)
+    act(() => {
+      vi.advanceTimersByTime(320)
+    })
+
+    // The adjusted time is 14:00, which has not arrived yet, so the sheet
+    // starts at the current time instead of refusing its own suggestion.
+    expect((screen.getByLabelText("Actual time") as HTMLInputElement).value).toBe("10:30")
+  })
+
+  it("offers the adjusted time as the default once it has arrived", () => {
+    vi.setSystemTime(new Date(2026, 4, 4, 15, 0))
     mocks.state = {
       ...mocks.state,
       supplements: [supplement, zinc],
@@ -325,5 +348,18 @@ describe("TodayRoutine spacing rules", () => {
     })
 
     expect((screen.getByLabelText("Actual time") as HTMLInputElement).value).toBe("14:00")
+  })
+
+  it("keeps the slot of a dose that is outside the window around the partner", () => {
+    mocks.state = {
+      ...mocks.state,
+      supplements: [supplement, zinc],
+      doseLogs: [takenLog({ takenAt: "20:00" })],
+      spacingRules: [RULE],
+    }
+
+    renderRoutine()
+
+    expect(screen.queryByText(/^Earliest at/)).toBeNull()
   })
 })

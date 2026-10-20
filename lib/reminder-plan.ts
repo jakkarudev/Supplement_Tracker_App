@@ -100,7 +100,7 @@ function buildReminder(
  * Builds the Reminder Plan from the Regimen, the Dose Logs, and the Spacing
  * Rules over a horizon that starts at the current Logical Day. Scheduled Doses
  * with any Dose Log, and physical times at or before `now`, produce no
- * reminder. A dose a Spacing Rule shifted is planned at its adjusted time, so
+ * reminder. A dose a Spacing Rule adjusted is planned at its adjusted time, so
  * it carries a new id and the old Reminder is cancelled by the sync. A dose
  * whose plan conflicts produces no reminder at all. Inventory is deliberately
  * ignored.
@@ -119,7 +119,7 @@ export function planReminders(
   const start = logicalDateFrom(now)
   const groups = new Map<string, { date: CalendarDate; time: string; at: Date; doses: ScheduledDose[] }>()
 
-  // The spacing plan is per logical day, and only a rule can shift a dose, so
+  // The spacing plan is per logical day, and only a rule can adjust a dose, so
   // the plan is built once per day that has one.
   const plans = new Map<CalendarDate, SpacingPlan>()
   function spacingPlanFor(date: CalendarDate): SpacingPlan {

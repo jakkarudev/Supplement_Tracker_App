@@ -148,6 +148,22 @@ function SpacingProbe() {
       >
         delete rule
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          dispatch({
+            type: "LOG_DOSE",
+            payload: {
+              supplementId: "vitamin-d",
+              date: "2026-05-04",
+              time: "08:00",
+              status: "taken",
+            },
+          })
+        }
+      >
+        log dose
+      </button>
     </div>
   )
 }
@@ -291,6 +307,30 @@ describe("spacing rules", () => {
         <SpacingProbe />
       </AppProvider>,
     )
+
+    expect(screen.getByTestId("rules").textContent).toBe("rule-1:240")
+  })
+
+  it("keeps the rules when a dose is logged", () => {
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        schemaVersion: 4,
+        supplements: [STORED_SUPPLEMENT, { ...STORED_SUPPLEMENT, id: "zinc", name: "Zinc" }],
+        doseLogs: [],
+        wellnessLogs: [],
+        spacingRules: [RULE],
+        settings: { timeFormat: "12h" },
+      }),
+    )
+
+    render(
+      <AppProvider>
+        <SpacingProbe />
+      </AppProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "log dose" }))
 
     expect(screen.getByTestId("rules").textContent).toBe("rule-1:240")
   })

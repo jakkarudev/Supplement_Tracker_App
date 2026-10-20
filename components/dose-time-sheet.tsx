@@ -19,7 +19,7 @@ import {
   today,
   type CalendarDate,
 } from "@/lib/day-regimen"
-import { spacingViolation } from "@/lib/spacing"
+import { findSpacingConflict } from "@/lib/spacing"
 
 type DoseTimeSheetProps = {
   open: boolean
@@ -76,19 +76,19 @@ export function DoseTimeSheet({
 
     // The spacing rule is a UI-seam check, as the future-time check is: the
     // write model records the time and never rewrites history.
-    const violation = spacingViolation(
+    const conflict = findSpacingConflict(
       { supplements, doseLogs, spacingRules },
       { supplementId, logicalDate, takenAt: normalized },
     )
-    if (violation) {
+    if (conflict) {
       const partnerName =
         supplements.find(
-          (supplement) => supplement.id === violation.partnerSupplementId,
+          (supplement) => supplement.id === conflict.partnerSupplementId,
         )?.name ?? "the linked supplement"
 
       setError(
-        violation.earliestTime
-          ? `Too close to ${partnerName}. The earliest safe time is ${formatTime(violation.earliestTime)}.`
+        conflict.earliestSafeTime
+          ? `Too close to ${partnerName}. The earliest safe time is ${formatTime(conflict.earliestSafeTime)}.`
           : `Too close to ${partnerName}. No safe time is left in this day.`,
       )
       return

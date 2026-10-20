@@ -155,11 +155,11 @@ describe("syncReminders", () => {
     const seeded = makeDriver()
     await syncReminders(input, now, seeded)
     const pending = seeded.schedule.mock.calls[0][0].notifications
-    const shifted = { ...supplement, times: ["09:00"] }
+    const adjusted = { ...supplement, times: ["09:00"] }
 
     const driver = makeDriver()
     driver.getPending.mockResolvedValue({ notifications: pending })
-    const result = await syncReminders({ supplements: [shifted], doseLogs: [], spacingRules: [] }, now, driver)
+    const result = await syncReminders({ supplements: [adjusted], doseLogs: [], spacingRules: [] }, now, driver)
     const scheduled = driver.schedule.mock.calls[0][0].notifications
 
     expect(result).toEqual({ status: "synced", scheduled: 30, cancelled: 30 })
