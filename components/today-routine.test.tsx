@@ -1,0 +1,203 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react"
+import { TodayRoutine } from "./today-routine"
+import type { AppState } from "@/lib/app-state"
+import type { DoseLog, Supplement } from "@/lib/supplements-data"
+
+const mocks = vi.hoisted(() => ({
+  state: {
+    supplements: [],
+    doseLogs: [],
+    wellnessLogs: [],
+  } as AppState,
+  dispatch: vi.fn(),
+}))
+
+vi.mock("@/lib/app-context", () => ({
+  useAppState: () => mocks.state,
+  useAppDispatch: () => mocks.dispatch,
+}))
+
+vi.mock("@/components/week-strip", () => ({
+  WeekStrip: () => null,
+}))
+
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+)
+
+window.HTMLElement.prototype.scrollIntoView = vi.fn()
+
+const DATE = "2026-05-04"
+
+const supplement: Supplement = {
+  id: "vitamin-d",
+  name: "Vitamin D3",
+  brand: "Thorne",
+  potency: "5000 IU",
+  dosage: "1 capsule",
+  form: "Capsule",
+  startedOn: "2026-05-01",
+  days: [0, 1, 2, 3, 4, 5, 6],
+  times: ["08:00"],
+  totalCount: 60,
+  currentCount: 60,
+  restockReminder: false,
+  restockThreshold: 10,
+}
+
+function takenLog(overrides: Partial<DoseLog> = {}): DoseLog {
+  return {
+    id: "log-1",
+    supplementId: supplement.id,
+    date: DATE,
+    time: "08:00",
+    status: "taken",
+    inventoryAmount: 1,
+    ...overrides,
+  }
+}
+
+function renderRoutine(date = DATE) {
+  render(<TodayRoutine date={date} onSelectDate={vi.fn()} />)
+}
+
+function slideToConfirm() {
+  const slider = screen.getByRole("button", { name: "Slide to confirm dose" })
+  fireEvent.pointerDown(slider, { pointerId: 1 })
+  fireEvent.pointerUp(window)
+  act(() => {
+    vi.advanceTimersByTime(320)
+  })
+}
+
+beforeEach(() => {
+  mocks.dispatch.mockClear()
+  mocks.state = {
+    supplements: [supplement],
+    doseLogs: [takenLog({ takenAt: "10:12" })],
+    wellnessLogs: [],
+  }
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date(2026, 4, 4, 10, 30))
+})
+
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
+
+describe("TodayRoutine actual intake time", () => {
+  it("shows the actual time beside the scheduled slot on a taken dose", () => {
+    renderRoutine()
+
+    expect(screen.getByText("Taken at 10:12 AM")).toBeTruthy()
+    expect(screen.getByText("08:00 AM")).toBeTruthy()
+  })
+
+  it("shows no invented actual time for a legacy taken log", () => {
+    mocks.state = {
+      ...mocks.state,
+      doseLogs: [takenLog()],
+    }
+
+    renderRoutine()
+
+    expect(screen.queryByText(/^Taken at/)).toBeNull()
+    expect(screen.queryByRole("button", { name: /Taken at/ })).toBeNull()
+  })
+
+  it("opens the correction sheet from the actual time and saves the new time", () => {
+    renderRoutine()
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Taken at 10:12 AM" }),
+    )
+
+    expect(screen.getByText("Correct actual time")).toBeTruthy()
+    const input = screen.getByLabelText("Actual time") as HTMLInputElement
+    expect(input.value).toBe("10:12")
+
+    fireEvent.change(input, { target: { value: "10:05" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(mocks.dispatch).toHaveBeenCalledWith({
+      type: "LOG_DOSE",
+      payload: {
+        supplementId: "vitamin-d",
+        date: DATE,
+        time: "08:00",
+        status: "taken",
+        takenAt: "10:05",
+      },
+    })
+  })
+
+  it("dispatches pending when the taken dose is undone", () => {
+    renderRoutine()
+
+    fireEvent.click(screen.getByRole("button", { name: /undo/i }))
+
+    expect(mocks.dispatch).toHaveBeenCalledWith({
+      type: "LOG_DOSE",
+      payload: {
+        supplementId: "vitamin-d",
+        date: DATE,
+        time: "08:00",
+        status: "pending",
+      },
+    })
+  })
+
+  it("shows the actual time read-only on a past day", () => {
+    const past = "2026-05-03"
+    mocks.state = {
+      ...mocks.state,
+      doseLogs: [takenLog({ date: past, takenAt: "10:12" })],
+    }
+
+    renderRoutine(past)
+
+    expect(screen.getByText("Taken at 10:12 AM")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /undo/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /Taken at/ })).toBeNull()
+  })
+
+  it("opens the time sheet at the current time when a pending dose is confirmed", () => {
+    mocks.state = { ...mocks.state, doseLogs: [] }
+
+    renderRoutine()
+    slideToConfirm()
+
+    expect(screen.getByText("Log actual time")).toBeTruthy()
+    expect(
+      (screen.getByLabelText("Actual time") as HTMLInputElement).value,
+    ).toBe("10:30")
+  })
+
+  it("resets the slider so a cancelled time sheet leaves the dose actionable", () => {
+    mocks.state = { ...mocks.state, doseLogs: [] }
+
+    renderRoutine()
+    slideToConfirm()
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+    expect(screen.queryByText("Log actual time")).toBeNull()
+
+    slideToConfirm()
+
+    expect(screen.getByText("Log actual time")).toBeTruthy()
+  })
+})

@@ -29,8 +29,9 @@ export type DoseLog = {
   id: string
   supplementId: string
   date: string   // "YYYY-MM-DD"
-  time: string   // "HH:mm", 24-hour
+  time: string   // "HH:mm", 24-hour; the scheduled slot
   status: DoseStatus
+  takenAt?: string // "HH:mm", 24-hour; actual intake time, only when taken
   inventoryAmount?: number // consumed when taken; recorded for exact reversal
 }
 

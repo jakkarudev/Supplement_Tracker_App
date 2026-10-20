@@ -20,7 +20,7 @@ describe("AppState", () => {
 
   it("is the shape storage migration returns", () => {
     const result = migrateStoredAppState({
-      schemaVersion: 1,
+      schemaVersion: 2,
       supplements: [],
       doseLogs: [],
       wellnessLogs: [],

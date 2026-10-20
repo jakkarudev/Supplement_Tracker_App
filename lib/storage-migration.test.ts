@@ -107,9 +107,9 @@ describe("migrateStoredAppState", () => {
     })
   })
 
-  it("does not report a migration for canonical version 1 data", () => {
+  it("does not report a migration for canonical version 2 data", () => {
     const result = migrateStoredAppState({
-      schemaVersion: 1,
+      schemaVersion: 2,
       supplements: [canonicalSupplement],
       doseLogs: [canonicalDoseLog],
       wellnessLogs: [],
@@ -126,6 +126,30 @@ describe("migrateStoredAppState", () => {
         wellnessLogs: [],
       },
     })
+  })
+
+  it("migrates version 1 logs without an actual time to version 2 unchanged", () => {
+    const result = migrateStoredAppState({
+      schemaVersion: 1,
+      supplements: [canonicalSupplement],
+      doseLogs: [canonicalDoseLog],
+      wellnessLogs: [],
+    })
+
+    expect(result).toEqual({
+      status: "ok",
+      migratedFrom: 1,
+      dropped: NO_DROPS,
+      repaired: NO_REPAIRS,
+      state: {
+        supplements: [canonicalSupplement],
+        doseLogs: [canonicalDoseLog],
+        wellnessLogs: [],
+      },
+    })
+    expect(result.status === "ok" && result.state.doseLogs[0]).not.toHaveProperty(
+      "takenAt",
+    )
   })
 
   it("reports a structurally invalid payload as corrupt", () => {
@@ -217,7 +241,7 @@ describe("migrateStoredAppState", () => {
   it("counts filtered, duplicated, and 12-hour stored times as one repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           { ...canonicalSupplement, times: ["noon", "08:00 PM", "20:00", "20:00"] },
         ],
@@ -233,7 +257,7 @@ describe("migrateStoredAppState", () => {
   it("counts dropped records per collection", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           canonicalSupplement,
           { name: "missing id and form" },
@@ -284,7 +308,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [canonicalSupplement, ...invalidSupplements],
         doseLogs: [],
         wellnessLogs: [],
@@ -302,7 +326,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [canonicalSupplement, ...invalidSupplements],
         doseLogs: [],
         wellnessLogs: [],
@@ -330,7 +354,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [canonicalSupplement, ...invalidSupplements],
         doseLogs: [],
         wellnessLogs: [],
@@ -354,7 +378,7 @@ describe("migrateStoredAppState", () => {
 
     const canonical = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [{ ...canonicalSupplement, startedOn: undefined }],
         doseLogs: [],
         wellnessLogs: [],
@@ -378,7 +402,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [canonicalSupplement, ...invalidSupplements],
         doseLogs: [],
         wellnessLogs: [],
@@ -394,7 +418,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [schedulelessSupplement],
         doseLogs: [],
         wellnessLogs: [],
@@ -406,7 +430,7 @@ describe("migrateStoredAppState", () => {
     expect(result.state.supplements).toEqual([schedulelessSupplement])
 
     const again = expectOk(
-      migrateStoredAppState({ schemaVersion: 1, ...result.state }),
+      migrateStoredAppState({ schemaVersion: 2, ...result.state }),
     )
     expect(again.dropped).toEqual(NO_DROPS)
     expect(again.repaired).toEqual(NO_REPAIRS)
@@ -416,7 +440,7 @@ describe("migrateStoredAppState", () => {
   it("filters stored days to integers 0–6 and dedupes them", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           { ...canonicalSupplement, days: [1, 7, 7, 2.5, "3", null, -1, 0, 6] },
         ],
@@ -436,7 +460,7 @@ describe("migrateStoredAppState", () => {
   it("dedupes stored days without reordering them", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [{ ...canonicalSupplement, days: [3, 1, 3] }],
         doseLogs: [],
         wellnessLogs: [],
@@ -450,7 +474,7 @@ describe("migrateStoredAppState", () => {
   it("replaces non-string text fields with their defaults", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           {
             ...canonicalSupplement,
@@ -481,7 +505,7 @@ describe("migrateStoredAppState", () => {
     for (const restockReminder of [null, 0, "yes", {}, []]) {
       const result = expectOk(
         migrateStoredAppState({
-          schemaVersion: 1,
+          schemaVersion: 2,
           supplements: [{ ...canonicalSupplement, restockReminder }],
           doseLogs: [],
           wellnessLogs: [],
@@ -496,7 +520,7 @@ describe("migrateStoredAppState", () => {
   it("keeps a stored false restock reminder as-is", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [{ ...canonicalSupplement, restockReminder: false }],
         doseLogs: [],
         wellnessLogs: [],
@@ -510,7 +534,7 @@ describe("migrateStoredAppState", () => {
   it("coerces numeric-string counts and thresholds", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           { ...canonicalSupplement, totalCount: "60", currentCount: "44", restockThreshold: "15" },
         ],
@@ -530,7 +554,7 @@ describe("migrateStoredAppState", () => {
   it("coerces numeric-string durations and cycle fields, counting the rewrite", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           {
             ...canonicalSupplement,
@@ -556,7 +580,7 @@ describe("migrateStoredAppState", () => {
     for (const stored of [0, -5, null, "banana"]) {
       const result = expectOk(
         migrateStoredAppState({
-          schemaVersion: 1,
+          schemaVersion: 2,
           supplements: [
             {
               ...canonicalSupplement,
@@ -580,7 +604,7 @@ describe("migrateStoredAppState", () => {
   it("keeps valid numeric durations and cycle fields without counting a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           {
             ...canonicalSupplement,
@@ -614,7 +638,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [minimalSupplement],
         doseLogs: [],
         wellnessLogs: [],
@@ -633,7 +657,7 @@ describe("migrateStoredAppState", () => {
   it("falls back to today's defaults for non-numeric counts and thresholds", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           {
             ...canonicalSupplement,
@@ -658,7 +682,7 @@ describe("migrateStoredAppState", () => {
   it("falls back to defaults for non-finite count values", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           {
             ...canonicalSupplement,
@@ -683,7 +707,7 @@ describe("migrateStoredAppState", () => {
   it("preserves finite negative counts and thresholds, counting no repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [
           { ...canonicalSupplement, totalCount: -5, currentCount: -3, restockThreshold: -1 },
         ],
@@ -712,7 +736,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [minimalSupplement],
         doseLogs: [],
         wellnessLogs: [],
@@ -756,7 +780,7 @@ describe("migrateStoredAppState", () => {
 
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [canonicalSupplement, messySupplement],
         doseLogs: [],
         wellnessLogs: [],
@@ -781,7 +805,7 @@ describe("migrateStoredAppState", () => {
 
   it("leaves nothing to repair after a repaired load is normalized again", () => {
     const raw = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       supplements: [
         { ...canonicalSupplement, days: [1, 7, 7], brand: 5, totalCount: "60" },
       ],
@@ -796,7 +820,7 @@ describe("migrateStoredAppState", () => {
       wellnessLogs: 0,
     })
 
-    const second = expectOk(migrateStoredAppState({ schemaVersion: 1, ...first.state }))
+    const second = expectOk(migrateStoredAppState({ schemaVersion: 2, ...first.state }))
     expect(second.repaired).toEqual(NO_REPAIRS)
     expect(second.state).toEqual(first.state)
   })
@@ -804,7 +828,7 @@ describe("migrateStoredAppState", () => {
   it("keeps the last valid wellness entry per date without counting superseded duplicates as drops", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [],
         doseLogs: [],
         wellnessLogs: [
@@ -826,7 +850,7 @@ describe("migrateStoredAppState", () => {
   it("preserves recorded inventory amounts on taken logs only", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [canonicalSupplement],
         doseLogs: [
           {
@@ -865,10 +889,82 @@ describe("migrateStoredAppState", () => {
     expect(result.state.doseLogs[2]).not.toHaveProperty("inventoryAmount")
   })
 
+  it("keeps a valid actual time on taken logs and leaves absence unrepaired", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 2,
+        supplements: [],
+        doseLogs: [
+          { ...canonicalDoseLog, id: "recorded", takenAt: "10:12" },
+          { ...canonicalDoseLog, id: "legacy" },
+        ],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.repaired).toEqual(NO_REPAIRS)
+    expect(result.state.doseLogs[0].takenAt).toBe("10:12")
+    expect(result.state.doseLogs[1]).not.toHaveProperty("takenAt")
+  })
+
+  it("strips an actual time from snoozed and pending logs, counting repairs", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 2,
+        supplements: [],
+        doseLogs: [
+          { ...canonicalDoseLog, id: "snoozed", status: "snoozed", takenAt: "10:12" },
+          { ...canonicalDoseLog, id: "pending", status: "pending", takenAt: "10:12" },
+        ],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.repaired).toEqual({
+      supplements: 0,
+      doseLogs: 2,
+      wellnessLogs: 0,
+    })
+    for (const log of result.state.doseLogs) {
+      expect(log).not.toHaveProperty("takenAt")
+    }
+  })
+
+  it("strips an invalid actual time from a taken log, counting a repair", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 2,
+        supplements: [],
+        doseLogs: [{ ...canonicalDoseLog, takenAt: "noon" }],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.dropped).toEqual(NO_DROPS)
+    expect(result.repaired.doseLogs).toBe(1)
+    expect(result.state.doseLogs[0]).not.toHaveProperty("takenAt")
+  })
+
+  it("normalizes a 12-hour actual time and counts the rewrite", () => {
+    const result = expectOk(
+      migrateStoredAppState({
+        schemaVersion: 2,
+        supplements: [],
+        doseLogs: [{ ...canonicalDoseLog, takenAt: "10:12 AM" }],
+        wellnessLogs: [],
+      }),
+    )
+
+    expect(result.repaired.doseLogs).toBe(1)
+    expect(result.state.doseLogs[0].takenAt).toBe("10:12")
+  })
+
   it("counts a 12-hour dose-log time rewrite as a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [],
         doseLogs: [{ ...canonicalDoseLog, time: "08:00 PM" }],
         wellnessLogs: [],
@@ -886,7 +982,7 @@ describe("migrateStoredAppState", () => {
   it("counts an inventory amount stripped from a log that may not carry one as a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [],
         doseLogs: [
           { ...canonicalDoseLog, id: "kept", status: "taken", inventoryAmount: 2 },
@@ -909,7 +1005,7 @@ describe("migrateStoredAppState", () => {
   it("counts each wellness entry that supersedes a stored date as a repair", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [],
         doseLogs: [],
         wellnessLogs: [
@@ -943,7 +1039,7 @@ describe("migrateStoredAppState", () => {
   it("preserves an annotated historical sample stored under the current version", () => {
     const result = expectOk(
       migrateStoredAppState({
-        schemaVersion: 1,
+        schemaVersion: 2,
         supplements: [{ ...historicalSample, startedOn: "1970-01-01" }],
         doseLogs: [],
         wellnessLogs: [],
@@ -957,7 +1053,7 @@ describe("migrateStoredAppState", () => {
 
   it("is idempotent for already-canonical state", () => {
     const canonicalState = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       supplements: [canonicalSupplement],
       doseLogs: [
         {
@@ -999,7 +1095,7 @@ describe("migrateStoredAppState", () => {
     expect(first.dropped).toEqual(NO_DROPS)
     expect(first.state).toEqual(canonicalState)
 
-    const second = expectOk(migrateStoredAppState({ schemaVersion: 1, ...first.state }))
+    const second = expectOk(migrateStoredAppState({ schemaVersion: 2, ...first.state }))
     expect(second.migratedFrom).toBeNull()
     expect(second.state).toEqual(first.state)
   })

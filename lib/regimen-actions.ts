@@ -1,6 +1,6 @@
 import type { DoseLog, DoseStatus, Supplement } from "./supplements-data"
 import { dosageInventoryAmount } from "./dosage"
-import { doseKey, type CalendarDate } from "./day-regimen"
+import { doseKey, normalizeTimeOfDay, type CalendarDate } from "./day-regimen"
 import { nanoid } from "./nanoid"
 
 /** The tracked state this module owns: supplements and their dose logs. */
@@ -15,6 +15,7 @@ export type LogDoseInput = {
   date: CalendarDate
   time: string
   status: DoseStatus
+  takenAt?: string
 }
 
 /** Appends a supplement. Scheduled doses are derived, so nothing is seeded. */
@@ -95,8 +96,14 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
       nextLog.inventoryAmount =
         existing.inventoryAmount ??
         (supplement ? dosageInventoryAmount(supplement.dosage) : undefined)
+
+      // Re-logging without a new time keeps the recorded one; an invalid
+      // value is ignored rather than erasing history.
+      const takenAt = normalizeTimeOfDay(input.takenAt)
+      if (takenAt !== null) nextLog.takenAt = takenAt
     } else {
       delete nextLog.inventoryAmount
+      delete nextLog.takenAt
     }
 
     return {
@@ -114,8 +121,12 @@ export function logDose(state: RegimenState, input: LogDoseInput): RegimenState 
     time: input.time,
     status: input.status,
   }
-  if (isTaken && supplement) {
-    newLog.inventoryAmount = dosageInventoryAmount(supplement.dosage)
+  if (isTaken) {
+    const takenAt = normalizeTimeOfDay(input.takenAt)
+    if (takenAt !== null) newLog.takenAt = takenAt
+    if (supplement) {
+      newLog.inventoryAmount = dosageInventoryAmount(supplement.dosage)
+    }
   }
 
   return { supplements, doseLogs: [...state.doseLogs, newLog] }
