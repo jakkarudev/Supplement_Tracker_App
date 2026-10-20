@@ -98,6 +98,14 @@ _Avoid_: restock reminder, restock notification
 The state of a supplement whose logged taken doses exceed its recorded inventory, leaving inventory below zero.
 _Avoid_: out of stock, negative stock
 
+**Days of Inventory**:
+The number of complete Logical Days the Inventory can cover when every remaining Scheduled Dose is taken as planned. Adherence does not move it: taking a scheduled dose lowers the Inventory and the remaining plan by the same amount.
+_Avoid_: days left, stock days, supply estimate
+
+**Run-out Date**:
+The first Calendar Date whose Scheduled Doses the Inventory cannot cover.
+_Avoid_: expiry, end date
+
 ### Calendar and adherence
 
 **Calendar Date**:
